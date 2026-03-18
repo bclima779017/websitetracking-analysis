@@ -1,0 +1,104 @@
+{
+  "url_patterns": {
+    "home": {
+      "path_exact": ["/", "/home", "/index", "/index.html", "/inicio"],
+      "path_regex": "^/(index|home|inicio)?(\\.html)?$",
+      "weight": 0.95
+    },
+    "category": {
+      "path_contains": [
+        "/category/", "/categories/", "/collections/", "/c/",
+        "/shop/", "/departamento/", "/browse/", "/catalog/",
+        "/loja/", "/produtos/", "/colecao/", "/secao/",
+        "/department/", "/listing/"
+      ],
+      "path_regex": "/(category|categor|collection|shop|browse|departamento|catalog|loja|produtos|colecao|secao|department|listing)(/|$)",
+      "weight": 0.7
+    },
+    "product": {
+      "path_contains": [
+        "/product/", "/products/", "/p/", "/dp/", "/item/",
+        "/produto/", "/pd/", "/sku/", "/detail/"
+      ],
+      "path_regex": "/(product|produto|item|dp|p|pd|detail)/[^/]+",
+      "sku_regex": "/[A-Z0-9]{5,}(/|$|\\?)",
+      "slug_regex": "/[a-z0-9-]+-\\d{4,}(/|$|\\?)",
+      "weight": 0.8
+    },
+    "cart": {
+      "path_contains": [
+        "/cart", "/carrinho", "/basket", "/bag",
+        "/sacola", "/cesta", "/minicart"
+      ],
+      "path_regex": "/(cart|carrinho|basket|bag|sacola|cesta|minicart)(/|$|\\?)",
+      "weight": 0.9
+    },
+    "checkout": {
+      "path_contains": [
+        "/checkout", "/payment", "/finalizar", "/order",
+        "/pagamento", "/pedido", "/compra", "/purchase"
+      ],
+      "path_regex": "/(checkout|payment|finalizar|order|pagamento|pedido|compra|purchase)(/|$|\\?)",
+      "weight": 0.9
+    }
+  },
+  "content_signals": {
+    "product": {
+      "selectors": [
+        "[data-product-id]",
+        "[itemtype*='Product']",
+        ".product-detail",
+        ".pdp",
+        "[class*='product-page']",
+        ".product-info",
+        ".product-price",
+        "[class*='price']",
+        "[data-action='add-to-cart']",
+        "[class*='add-to-cart']",
+        "[class*='buy-button']"
+      ],
+      "meta_og_type": "product"
+    },
+    "category": {
+      "selectors": [
+        ".product-list",
+        ".product-grid",
+        "[class*='product-card']",
+        "[class*='category-']",
+        ".collection-grid",
+        "[itemtype*='ItemList']",
+        ".filter-sidebar",
+        "[class*='facet']",
+        "[class*='filter']"
+      ]
+    },
+    "cart": {
+      "selectors": [
+        "[class*='cart-item']",
+        "[class*='cart-product']",
+        "[class*='quantity']",
+        ".remove-item",
+        "[class*='subtotal']",
+        "[class*='carrinho']"
+      ]
+    },
+    "checkout": {
+      "selectors": [
+        "[class*='checkout-step']",
+        "[class*='payment-method']",
+        "input[name*='card']",
+        "[class*='shipping']",
+        "[class*='order-summary']",
+        "form[action*='checkout']"
+      ]
+    }
+  },
+  "sitemap_paths": [
+    "/sitemap.xml",
+    "/sitemap_index.xml",
+    "/sitemap-index.xml",
+    "/sitemaps.xml",
+    "/sitemap/sitemap.xml"
+  ],
+  "robots_txt_path": "/robots.txt"
+}

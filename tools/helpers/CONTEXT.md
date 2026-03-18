@@ -17,6 +17,9 @@ helpers/
 ├── shared/         ← Utilitários comuns (config, tipos, constantes)
 │   ├── config.py        Regex patterns, constantes, tipos de retorno
 │   └── url_validator.py Valida DNS, acessibilidade, redirecionamentos (Etapa 1)
+├── discover/       ← Etapa 1.5: Descoberta e Seleção de Páginas do Funil
+│   ├── sitemap_parser.py      Fetch e parse de sitemap.xml (httpx, sem browser)
+│   └── page_selector.py       Classifica URLs, spider BFS, seleciona amostra por stage
 ├── intercept/      ← Etapa 2: Interceptação de Rede
 │   ├── network_interceptor.py   Escuta tráfego até networkidle
 │   └── tag_identifier.py        Extrai IDs de tags por regex (GTM, GA4, Meta)
@@ -34,7 +37,7 @@ helpers/
 ## Fluxo de Dependência
 
 ```
-url_validator → network_interceptor → tag_identifier
+url_validator → page_selector (sitemap + spider) → network_interceptor → tag_identifier
                                     → attribution_tester
                                     → sst_detector
                                     → datalayer_inspector

@@ -10,6 +10,7 @@ This module provides:
 from __future__ import annotations
 
 import json
+from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
@@ -52,10 +53,78 @@ COMMON_SGTM_SUBDOMAINS = [
     "events",
 ]
 
+# Page discovery constants
+SPIDER_MAX_DEPTH = 3
+SPIDER_MAX_PAGES = 50
+SITEMAP_TIMEOUT = 15  # seconds per sitemap HTTP request
+
+
+# ============================================================================
+# ENUMS
+# ============================================================================
+
+
+class FunnelStage(str, Enum):
+    """E-commerce conversion funnel stages for page classification."""
+
+    HOME = "home"
+    CATEGORY = "category"
+    PRODUCT = "product"
+    CART = "cart"
+    CHECKOUT = "checkout"
+    OTHER = "other"
+
 
 # ============================================================================
 # PYDANTIC MODELS — Pipeline Output Types
 # ============================================================================
+
+
+class DiscoveredUrl(BaseModel):
+    """A URL discovered during sitemap parsing or spidering."""
+
+    url: str = Field(..., description="Absolute URL")
+    source: str = Field(..., description="How discovered: 'sitemap' or 'spider'")
+    sitemap_priority: Optional[float] = Field(default=None, description="Priority from sitemap (0.0-1.0)")
+    sitemap_lastmod: Optional[str] = Field(default=None, description="Last modification date from sitemap")
+    depth: int = Field(default=0, description="Spider depth from homepage (0 = homepage)")
+
+
+class ClassifiedUrl(BaseModel):
+    """A URL classified into a funnel stage."""
+
+    url: str = Field(..., description="Absolute URL")
+    stage: FunnelStage = Field(..., description="Classified funnel stage")
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Classification confidence 0-1")
+    source: str = Field(default="spider", description="Discovery source: 'sitemap' or 'spider'")
+    sitemap_priority: Optional[float] = Field(default=None, description="Sitemap priority if available")
+    classification_signals: list[str] = Field(
+        default_factory=list,
+        description="Signals that drove classification (e.g., 'url:/product/', 'content:og:type=product')",
+    )
+
+
+class FunnelSelection(BaseModel):
+    """Final selected pages for funnel analysis."""
+
+    pages: dict[str, Optional[ClassifiedUrl]] = Field(
+        ...,
+        description="Map of FunnelStage value -> best selected URL (None if no candidate found)",
+    )
+    total_discovered: int = Field(default=0, description="Total URLs found by sitemap + spider")
+    total_classified: int = Field(default=0, description="URLs that matched a funnel stage (not OTHER)")
+    gaps: list[str] = Field(
+        default_factory=list,
+        description="Funnel stages with no candidates found",
+    )
+    discovery_stats: dict[str, int] = Field(
+        default_factory=dict,
+        description="Stats: sitemap_urls, spider_urls, spider_depth_reached, etc.",
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal issues during discovery (e.g., 'sitemap.xml returned 404')",
+    )
 
 
 class UrlValidationResult(BaseModel):
@@ -338,6 +407,92 @@ def load_scoring_rubrics() -> dict[str, dict[str, Any]]:
                 4: "Eventos completos, schema ok",
                 5: "Excelente, todos campos presentes",
             },
+        }
+
+    with open(assets_path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_funnel_heuristics() -> dict[str, Any]:
+    """
+    Load funnel classification heuristics from tools/assets/protocols/funnel-heuristics.json.
+
+    Returns:
+        Dictionary with url_patterns, content_signals, sitemap_paths, robots_txt_path.
+
+    Raises:
+        FileNotFoundError: If heuristics file does not exist
+        json.JSONDecodeError: If file is not valid JSON
+    """
+    assets_path = Path(__file__).parent.parent.parent / "assets" / "protocols" / "funnel-heuristics.json"
+    if not assets_path.exists():
+        # Return hardcoded fallback patterns
+        return {
+            "url_patterns": {
+                "home": {
+                    "path_exact": ["/", "/home", "/index", "/inicio"],
+                    "weight": 0.95,
+                },
+                "category": {
+                    "path_contains": [
+                        "/category/", "/categories/", "/collections/", "/c/",
+                        "/shop/", "/departamento/", "/browse/", "/catalog/",
+                        "/loja/", "/produtos/",
+                    ],
+                    "weight": 0.7,
+                },
+                "product": {
+                    "path_contains": [
+                        "/product/", "/products/", "/p/", "/dp/", "/item/",
+                        "/produto/", "/pd/", "/sku/",
+                    ],
+                    "weight": 0.8,
+                },
+                "cart": {
+                    "path_contains": [
+                        "/cart", "/carrinho", "/basket", "/bag", "/sacola", "/cesta",
+                    ],
+                    "weight": 0.9,
+                },
+                "checkout": {
+                    "path_contains": [
+                        "/checkout", "/payment", "/finalizar", "/order",
+                        "/pagamento", "/pedido",
+                    ],
+                    "weight": 0.9,
+                },
+            },
+            "content_signals": {
+                "product": {
+                    "selectors": [
+                        "[data-product-id]", "[itemtype*='Product']",
+                        ".product-detail", ".pdp", ".product-price",
+                    ],
+                },
+                "category": {
+                    "selectors": [
+                        ".product-list", ".product-grid",
+                        "[class*='product-card']", "[class*='filter']",
+                    ],
+                },
+                "cart": {
+                    "selectors": [
+                        "[class*='cart-item']", "[class*='cart-product']",
+                        "[class*='subtotal']",
+                    ],
+                },
+                "checkout": {
+                    "selectors": [
+                        "[class*='checkout-step']", "[class*='payment-method']",
+                        "[class*='order-summary']",
+                    ],
+                },
+            },
+            "sitemap_paths": [
+                "/sitemap.xml", "/sitemap_index.xml",
+                "/sitemap-index.xml", "/sitemaps.xml",
+            ],
+            "robots_txt_path": "/robots.txt",
         }
 
     with open(assets_path, encoding="utf-8") as f:
