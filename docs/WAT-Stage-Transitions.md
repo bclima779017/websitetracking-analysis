@@ -53,6 +53,7 @@ Arquivos gerados pelo scaffolding. Estrutura completa, código mínimo.
 
 ```
 tools/helpers/shared/          (sem .py)
+tools/helpers/discover/        (sem .py)
 tools/helpers/intercept/       (sem .py)
 tools/helpers/attribute/       (sem .py)
 tools/helpers/detect/          (sem .py)
@@ -82,6 +83,7 @@ tests/                         (sem arquivos)
 | `tools/assets/protocols/scoring-rubrics.md` | 🆕 | Rubricas de scoring: o que é nota 0, 1, 2, 3, 4, 5 para cada módulo |
 | `tools/assets/protocols/regex-patterns.json` | 🆕 | Patterns de regex para identificação de tags (GTM: `googletagmanager.com/gtm.js`, GA4: `google-analytics.com/g/collect`, Meta: `facebook.net/fbevents.js`, LinkedIn: `snap.licdn.com`) |
 | `tools/assets/protocols/ga4-events-taxonomy.json` | 🆕 | Dicionário de eventos GA4 e-commerce (view_item, add_to_cart, purchase, etc.) com campos obrigatórios e recomendados |
+| `tools/assets/protocols/funnel-heuristics.json` | 🆕 | Heurísticas de classificação de URL por stage do funil (home/category/product/cart/checkout), seletores CSS de conteúdo, paths de sitemap |
 
 ### Helpers Python (ordem de criação recomendada)
 
@@ -89,6 +91,8 @@ tests/                         (sem arquivos)
 |---------|--------|-------|-----------|
 | `tools/helpers/shared/config.py` | 🆕 | Base | Constantes, dataclasses de retorno (Pydantic), importação dos regex patterns e taxonomia GA4 dos assets JSON |
 | `tools/helpers/shared/url_validator.py` | 🆕 | 1 | Valida DNS, acessibilidade HTTP(S), resolve redirects. Retorna URL final + status. Gate: HTTP 200 |
+| `tools/helpers/discover/sitemap_parser.py` | 🆕 | 1.5 | Fetch e parse de sitemap.xml/robots.txt via httpx (sem browser). Retorna `list[DiscoveredUrl]` ordenada por priority |
+| `tools/helpers/discover/page_selector.py` | 🆕 | 1.5 | Classifica URLs por heurística de funil (URL patterns + conteúdo), spider BFS com Playwright, seleciona amostra representativa. Retorna `FunnelSelection` |
 | `tools/helpers/intercept/network_interceptor.py` | 🆕 | 2 | Usa Playwright headless para carregar a página, interceptar todos os requests de rede até networkidle. Retorna lista de URLs + status HTTP + headers |
 | `tools/helpers/intercept/tag_identifier.py` | 🆕 | 2 | Recebe lista de requests, aplica regex patterns do asset, extrai IDs de tags (GTM-XXXXX, G-XXXXX, pixel IDs). Função pura, sem browser |
 | `tools/helpers/attribute/attribution_tester.py` | 🆕 | 3 | Usa Playwright para navegar com UTMs simuladas (`?utm_source=agent_test&gclid=TeStGcLiD`), inspeciona `document.cookie` e `localStorage`. Verifica persistência e redirect strip |
@@ -267,6 +271,7 @@ protocols/*.md|.json         (vazio)       🆕            ➡️            ➡
 examples/sample.json         🆕            ➡️            ➡️            ➡️
 
 helpers/shared/config.py     (vazio)       🆕            ➡️            ➡️
+helpers/discover/*.py        (vazio)       🆕            ➡️            ➡️
 helpers/intercept/*.py       (vazio)       🆕            ➡️            ➡️
 helpers/attribute/*.py       (vazio)       🆕            ➡️            ➡️
 helpers/detect/*.py          (vazio)       🆕            ➡️            ➡️
