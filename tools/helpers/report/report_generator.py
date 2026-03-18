@@ -15,6 +15,7 @@ from ..shared.config import (
     AttributionResult,
     DataLayerResult,
     DiagnosticReport,
+    FunnelDataLayerResult,
     ModuleScore,
     SSTResult,
     TagIdentification,
@@ -29,6 +30,7 @@ def generate_report(
     datalayer_data: DataLayerResult,
     scores: list[ModuleScore],
     overall: dict[str, Any],
+    funnel_datalayer: FunnelDataLayerResult | None = None,
 ) -> DiagnosticReport:
     """
     Generate final diagnostic report from all pipeline outputs.
@@ -47,6 +49,7 @@ def generate_report(
         datalayer_data: DataLayerResult from Stage 5
         scores: List of ModuleScore from Stage 6
         overall: Overall maturity dict from scorer
+        funnel_datalayer: Optional per-page funnel DataLayer analysis
 
     Returns:
         DiagnosticReport matching sample-diagnostic.json contract
@@ -132,13 +135,10 @@ def generate_report(
 
     # === DATALAYER DEPTH ===
     dl_score = score_map.get("datalayer_depth", scores[3] if len(scores) > 3 else scores[0])
-    modules["datalayer_depth"] = {
-        "module_name": "datalayer_depth",
-        "rating": dl_score.rating,
-        "score": dl_score.score,
-        "max_score": dl_score.max_score,
-        "comment": dl_score.comment,
-        "data": {
+
+    if funnel_datalayer and funnel_datalayer.pages:
+        dl_evidence = _generate_funnel_datalayer_evidence(funnel_datalayer)
+        dl_module_data = {
             "datalayer_exists": datalayer_data.datalayer_exists,
             "datalayer_events_count": datalayer_data.datalayer_events_count,
             "standard_events_detected": datalayer_data.standard_events_detected,
@@ -147,16 +147,37 @@ def generate_report(
             "ecommerce_items_array": datalayer_data.ecommerce_items_array,
             "required_fields_present": datalayer_data.required_fields_present,
             "missing_recommended_fields": datalayer_data.missing_recommended_fields,
-        },
-        "evidence": _generate_datalayer_evidence(datalayer_data),
+            "funnel_analysis": funnel_datalayer.model_dump(),
+        }
+    else:
+        dl_evidence = _generate_datalayer_evidence(datalayer_data)
+        dl_module_data = {
+            "datalayer_exists": datalayer_data.datalayer_exists,
+            "datalayer_events_count": datalayer_data.datalayer_events_count,
+            "standard_events_detected": datalayer_data.standard_events_detected,
+            "interaction_tracking_active": datalayer_data.interaction_tracking_active,
+            "ga4_schema_compliant": datalayer_data.ga4_schema_compliant,
+            "ecommerce_items_array": datalayer_data.ecommerce_items_array,
+            "required_fields_present": datalayer_data.required_fields_present,
+            "missing_recommended_fields": datalayer_data.missing_recommended_fields,
+        }
+
+    modules["datalayer_depth"] = {
+        "module_name": "datalayer_depth",
+        "rating": dl_score.rating,
+        "score": dl_score.score,
+        "max_score": dl_score.max_score,
+        "comment": dl_score.comment,
+        "data": dl_module_data,
+        "evidence": dl_evidence,
         "scoring_breakdown": dl_score.scoring_breakdown,
     }
 
     # Generate top issues
     top_issues = _generate_top_issues(modules)
 
-    # Generate recommendations
-    recommendations = _generate_recommendations(modules)
+    # Generate recommendations (pass funnel data for per-page recs)
+    recommendations = _generate_recommendations(modules, funnel_datalayer=funnel_datalayer)
 
     return DiagnosticReport(
         domain=domain,
@@ -165,6 +186,7 @@ def generate_report(
         overall_maturity=overall,
         top_issues=top_issues,
         recommendations_summary=recommendations,
+        funnel_analysis=funnel_datalayer,
     )
 
 
@@ -402,6 +424,100 @@ def _generate_datalayer_evidence(dl_data: DataLayerResult) -> list[dict[str, Any
     return evidence
 
 
+def _generate_funnel_datalayer_evidence(funnel_dl: FunnelDataLayerResult) -> list[dict[str, Any]]:
+    """Generate evidence items for per-page funnel DataLayer analysis."""
+    evidence = []
+
+    stage_labels = {
+        "home": "Home", "category": "Categoria", "product": "Produto",
+        "cart": "Carrinho", "checkout": "Checkout",
+    }
+
+    for stage, page_data in funnel_dl.pages.items():
+        label = stage_labels.get(stage, stage)
+
+        if not page_data.accessible:
+            evidence.append({
+                "check": f"DataLayer — {label}",
+                "result": "info",
+                "score_impact": "skip",
+                "detail": f"Página inacessível (login/redirect): {page_data.url}",
+                "source": "Navegação com Playwright",
+                "url_captured": page_data.url,
+            })
+            continue
+
+        if not page_data.datalayer_exists:
+            evidence.append({
+                "check": f"DataLayer — {label}",
+                "result": "fail",
+                "score_impact": "0",
+                "detail": f"window.dataLayer não encontrado em {label}",
+                "source": f"Execução de window.dataLayer em {page_data.url}",
+                "url_captured": page_data.url,
+            })
+            continue
+
+        # Load events check
+        if page_data.missing_load_events:
+            evidence.append({
+                "check": f"Eventos de carregamento — {label}",
+                "result": "fail",
+                "score_impact": f"-{len(page_data.missing_load_events)} eventos",
+                "detail": f"Eventos faltando em {label}: {', '.join(page_data.missing_load_events)}",
+                "source": f"Comparação com funnel-event-map para {stage}",
+                "url_captured": page_data.url,
+                "matched_events": page_data.matched_events,
+                "missing_events": page_data.missing_load_events,
+            })
+        else:
+            evidence.append({
+                "check": f"Eventos de carregamento — {label}",
+                "result": "pass",
+                "score_impact": f"+{len(page_data.matched_events)} eventos",
+                "detail": f"Todos eventos de carregamento presentes em {label}: {', '.join(page_data.matched_events)}",
+                "source": f"Comparação com funnel-event-map para {stage}",
+                "url_captured": page_data.url,
+                "matched_events": page_data.matched_events,
+            })
+
+        # Interaction events (informational)
+        if page_data.missing_interaction_events:
+            evidence.append({
+                "check": f"Eventos de interação — {label}",
+                "result": "info",
+                "score_impact": "informativo",
+                "detail": f"Eventos de interação não detectados em {label}: {', '.join(page_data.missing_interaction_events)}",
+                "source": "Eventos de interação requerem ação do usuário — não penalizam",
+                "url_captured": page_data.url,
+            })
+
+        # Ecommerce schema (for product/cart/checkout)
+        if stage in ("product", "cart", "checkout"):
+            if page_data.ecommerce_items_array:
+                evidence.append({
+                    "check": f"Schema e-commerce — {label}",
+                    "result": "pass" if page_data.ga4_schema_compliant else "partial",
+                    "score_impact": "+1" if page_data.ga4_schema_compliant else "+0.5",
+                    "detail": f"Schema GA4 {'compliant' if page_data.ga4_schema_compliant else 'parcial'} em {label}",
+                    "source": "Validação do array ecommerce.items[]",
+                    "fields_present": page_data.required_fields_present,
+                    "fields_missing": page_data.missing_required_fields,
+                })
+
+    # Overall coverage
+    evidence.append({
+        "check": "Cobertura do funil",
+        "result": "pass" if funnel_dl.funnel_coverage >= 0.8 else "partial" if funnel_dl.funnel_coverage >= 0.5 else "fail",
+        "score_impact": f"Score agregado: {funnel_dl.aggregate_score:.1f}/5",
+        "detail": f"{int(funnel_dl.funnel_coverage * 100)}% das etapas do funil analisadas, "
+                  f"{funnel_dl.total_matched_load_events}/{funnel_dl.total_expected_load_events} eventos de carregamento detectados",
+        "source": "Análise agregada por página do funil",
+    })
+
+    return evidence
+
+
 def _generate_top_issues(modules: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     """Generate top 3 issues ranked by severity."""
     issues = []
@@ -479,7 +595,10 @@ def _generate_top_issues(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
     return issues
 
 
-def _generate_recommendations(modules: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+def _generate_recommendations(
+    modules: dict[str, dict[str, Any]],
+    funnel_datalayer: FunnelDataLayerResult | None = None,
+) -> dict[str, list[str]]:
     """Generate recommendations grouped by effort level."""
     recommendations = {
         "quick_wins": [],
@@ -508,6 +627,36 @@ def _generate_recommendations(modules: dict[str, dict[str, Any]]) -> dict[str, l
 
     if not modules["server_side_tracking"]["data"]["meta_capi_proxy"]:
         recommendations["high_effort"].append("Implementar Meta Conversions API (CAPI) via proxy first-party")
+
+    # Funnel-specific DataLayer recommendations
+    if funnel_datalayer and funnel_datalayer.pages:
+        stage_recs = {
+            "product": ("view_item", "Implementar evento view_item na página de produto"),
+            "cart": ("view_cart", "Implementar evento view_cart na página de carrinho"),
+            "checkout": ("begin_checkout", "Implementar evento begin_checkout na página de checkout"),
+            "category": ("view_item_list", "Implementar evento view_item_list na página de categoria"),
+        }
+
+        no_datalayer_pages = []
+        for stage, page_data in funnel_datalayer.pages.items():
+            if not page_data.accessible:
+                continue
+
+            if not page_data.datalayer_exists:
+                stage_labels = {"home": "Home", "category": "Categoria", "product": "Produto",
+                                "cart": "Carrinho", "checkout": "Checkout"}
+                no_datalayer_pages.append(stage_labels.get(stage, stage))
+                continue
+
+            if stage in stage_recs:
+                event_name, rec_text = stage_recs[stage]
+                if event_name in page_data.missing_load_events:
+                    recommendations["quick_wins"].append(rec_text)
+
+        if no_datalayer_pages:
+            recommendations["high_effort"].append(
+                f"Implementar window.dataLayer em: {', '.join(no_datalayer_pages)}"
+            )
 
     return recommendations
 

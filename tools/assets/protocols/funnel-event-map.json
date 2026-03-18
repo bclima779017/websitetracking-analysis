@@ -1,0 +1,44 @@
+{
+  "stage_weights": {
+    "product": 0.30,
+    "cart": 0.25,
+    "checkout": 0.20,
+    "category": 0.15,
+    "home": 0.10
+  },
+  "stages": {
+    "home": {
+      "expected_events": [
+        { "event": "page_view", "type": "load", "weight": 1.0, "required": true }
+      ]
+    },
+    "category": {
+      "expected_events": [
+        { "event": "page_view", "type": "load", "weight": 0.3, "required": false },
+        { "event": "view_item_list", "type": "load", "weight": 0.7, "required": true }
+      ]
+    },
+    "product": {
+      "expected_events": [
+        { "event": "page_view", "type": "load", "weight": 0.2, "required": false },
+        { "event": "view_item", "type": "load", "weight": 0.6, "required": true },
+        { "event": "add_to_cart", "type": "interaction", "weight": 0.2, "required": false }
+      ]
+    },
+    "cart": {
+      "expected_events": [
+        { "event": "page_view", "type": "load", "weight": 0.2, "required": false },
+        { "event": "view_cart", "type": "load", "weight": 0.6, "required": true },
+        { "event": "remove_from_cart", "type": "interaction", "weight": 0.2, "required": false }
+      ]
+    },
+    "checkout": {
+      "expected_events": [
+        { "event": "page_view", "type": "load", "weight": 0.1, "required": false },
+        { "event": "begin_checkout", "type": "load", "weight": 0.5, "required": true },
+        { "event": "add_shipping_info", "type": "interaction", "weight": 0.2, "required": false },
+        { "event": "add_payment_info", "type": "interaction", "weight": 0.2, "required": false }
+      ]
+    }
+  }
+}

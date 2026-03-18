@@ -5,10 +5,14 @@ Completely isolates Playwright from Streamlit's event loop / greenlet conflicts.
 Single Chromium launch, single navigation, CDP capture, stealth, scroll.
 
 Usage:
+    # Legacy single-page mode
     python run_browser_pipeline.py <url> <domain>
 
+    # Multi-page mode (per-page DataLayer analysis)
+    python run_browser_pipeline.py <url> <domain> --pages '{"home":"url1","product":"url2"}'
+
 Output:
-    JSON dict with keys: requests, dl_data, attr_data
+    JSON dict with keys: requests, dl_data, attr_data, per_page_dl
     Printed to stdout. Errors to stderr.
 """
 
@@ -280,6 +284,121 @@ async def inspect_datalayer(page):
 
 
 # ---------------------------------------------------------------------------
+# Per-page DataLayer inspection (new context per page)
+# ---------------------------------------------------------------------------
+
+DATALAYER_EXTRACT_JS = """
+() => {
+    const dl = window.dataLayer || [];
+    const events = [];
+    const eventNames = [];
+    let ecommerce = false;
+    const requiredFields = ['item_id', 'item_name', 'price', 'quantity'];
+    const foundRequired = new Set();
+    let ga4Compliant = false;
+
+    for (const ev of dl) {
+        if (typeof ev !== 'object' || ev === null) continue;
+        const name = ev.event;
+        if (name) eventNames.push(name);
+        if (ev.ecommerce || ev.items) {
+            ecommerce = true;
+            const items = (ev.ecommerce && ev.ecommerce.items) || ev.items || [];
+            if (Array.isArray(items) && items.length > 0 && typeof items[0] === 'object') {
+                const first = items[0];
+                for (const f of requiredFields) {
+                    if (f in first) foundRequired.add(f);
+                }
+            }
+        }
+        if (events.length < 5) events.push(ev);
+    }
+
+    if (foundRequired.size >= requiredFields.length) ga4Compliant = true;
+
+    return {
+        datalayer_exists: dl.length > 0,
+        events_count: dl.length,
+        event_names: eventNames,
+        ecommerce_items_array: ecommerce,
+        ga4_schema_compliant: ga4Compliant,
+        required_fields_present: Array.from(foundRequired),
+        missing_required_fields: requiredFields.filter(f => !foundRequired.has(f)),
+        sample_events: events,
+    };
+}
+"""
+
+
+async def inspect_page_datalayer(browser, url):
+    """Navigate to a page, extract dataLayer, return dict with analysis.
+
+    Creates a fresh browser context for isolation. Handles inaccessible pages
+    (login walls, errors) gracefully by returning accessible=False.
+    """
+    result = {
+        "url": url,
+        "accessible": False,
+        "datalayer_exists": False,
+        "events_detected": [],
+        "ecommerce_items_array": False,
+        "ga4_schema_compliant": False,
+        "required_fields_present": [],
+        "missing_required_fields": [],
+        "sample_events": [],
+    }
+
+    context = await browser.new_context(
+        user_agent=random.choice(USER_AGENTS),
+        viewport={"width": 1920, "height": 1080},
+        ignore_https_errors=True,
+        locale="pt-BR",
+    )
+
+    try:
+        page = await context.new_page()
+        await apply_stealth(page)
+
+        response = None
+        try:
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            return result
+
+        if response and response.status >= 400:
+            return result
+
+        result["accessible"] = True
+
+        # Wait for dynamic content + scroll
+        await asyncio.sleep(3)
+        try:
+            await page.evaluate(SCROLL_JS)
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+
+        # Extract dataLayer
+        try:
+            dl_info = await page.evaluate(DATALAYER_EXTRACT_JS)
+        except Exception:
+            return result
+
+        result["datalayer_exists"] = dl_info.get("datalayer_exists", False)
+        result["events_detected"] = dl_info.get("event_names", [])
+        result["ecommerce_items_array"] = dl_info.get("ecommerce_items_array", False)
+        result["ga4_schema_compliant"] = dl_info.get("ga4_schema_compliant", False)
+        result["required_fields_present"] = dl_info.get("required_fields_present", [])
+        result["missing_required_fields"] = dl_info.get("missing_required_fields", [])
+        result["sample_events"] = dl_info.get("sample_events", [])
+
+    finally:
+        await context.close()
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Stage 3: Attribution (separate context, same browser)
 # ---------------------------------------------------------------------------
 
@@ -368,7 +487,7 @@ async def test_attribution(browser, url):
 # Main: single browser, all stages, JSON output
 # ---------------------------------------------------------------------------
 
-async def run_all(url: str, domain: str) -> dict:
+async def run_all(url: str, domain: str, funnel_pages: dict[str, str] | None = None) -> dict:
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
@@ -390,7 +509,7 @@ async def run_all(url: str, domain: str) -> dict:
         requests = await intercept_network(page, cdp, url)
         await cdp.detach()
 
-        # Stage 5: DataLayer (same page, no re-navigation)
+        # Stage 5: DataLayer (same page, no re-navigation — legacy single-page)
         dl_data = await inspect_datalayer(page)
 
         await context.close()
@@ -398,28 +517,46 @@ async def run_all(url: str, domain: str) -> dict:
         # Stage 3: Attribution (separate context)
         attr_data = await test_attribution(browser, url)
 
+        # Per-page DataLayer analysis (new)
+        per_page_dl = {}
+        if funnel_pages:
+            for stage, page_url in funnel_pages.items():
+                print(f"Inspecting DataLayer: {stage} -> {page_url}", file=sys.stderr)
+                per_page_dl[stage] = await inspect_page_datalayer(browser, page_url)
+
         await browser.close()
 
     return {
         "requests": requests,
         "dl_data": dl_data,
         "attr_data": attr_data,
+        "per_page_dl": per_page_dl,
     }
 
 
 def main():
     if len(sys.argv) < 3:
-        print(json.dumps({"requests": [], "dl_data": {}, "attr_data": {}}))
+        print(json.dumps({"requests": [], "dl_data": {}, "attr_data": {}, "per_page_dl": {}}))
         return
 
     url = sys.argv[1]
     domain = sys.argv[2]
 
+    # Parse optional --pages argument
+    funnel_pages = None
+    for i, arg in enumerate(sys.argv[3:], start=3):
+        if arg == "--pages" and i + 1 < len(sys.argv):
+            try:
+                funnel_pages = json.loads(sys.argv[i + 1])
+            except json.JSONDecodeError as e:
+                print(f"Invalid --pages JSON: {e}", file=sys.stderr)
+            break
+
     try:
-        result = asyncio.run(run_all(url, domain))
+        result = asyncio.run(run_all(url, domain, funnel_pages=funnel_pages))
     except Exception as e:
         print(f"Pipeline error: {type(e).__name__}: {e}", file=sys.stderr)
-        result = {"requests": [], "dl_data": {}, "attr_data": {}}
+        result = {"requests": [], "dl_data": {}, "attr_data": {}, "per_page_dl": {}}
 
     print(json.dumps(result))
 

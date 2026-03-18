@@ -16,6 +16,7 @@ def score_module(
     module_name: str,
     data: dict[str, Any],
     rubrics: dict[str, dict[int, str]] | None = None,
+    funnel_data: dict[str, Any] | None = None,
 ) -> ModuleScore:
     """
     Calculate score for a single module (0-5) based on diagnostic data.
@@ -28,6 +29,7 @@ def score_module(
                      server_side_tracking, datalayer_depth
         data: Dictionary of module-specific diagnostic data
         rubrics: Optional rubric definitions (loaded from assets if None)
+        funnel_data: Optional per-page funnel DataLayer data (for datalayer_depth)
 
     Returns:
         ModuleScore with score, rating, and comment in PT-BR
@@ -50,7 +52,10 @@ def score_module(
         score, rating, comment, breakdown = _score_server_side_tracking(data)
 
     elif module_name == "datalayer_depth":
-        score, rating, comment, breakdown = _score_datalayer_depth(data)
+        if funnel_data and funnel_data.get("pages"):
+            score, rating, comment, breakdown = _score_datalayer_depth_per_page(funnel_data)
+        else:
+            score, rating, comment, breakdown = _score_datalayer_depth(data)
 
     return ModuleScore(
         module_name=module_name,
@@ -326,6 +331,65 @@ def _score_datalayer_depth(data: dict[str, Any]) -> tuple[float, str, str, str]:
     else:
         rating = "Básico"
         comment = "DataLayer mínimo. Poucos eventos e dados limitados para análise."
+
+    return score, rating, comment, breakdown
+
+
+def _score_datalayer_depth_per_page(funnel_data: dict[str, Any]) -> tuple[float, str, str, str]:
+    """
+    Score DataLayer Depth using per-page funnel analysis (0-5).
+
+    Uses the aggregate_score from FunnelDataLayerResult and generates
+    a breakdown from individual page results.
+    """
+    aggregate_score = funnel_data.get("aggregate_score", 0.0)
+    pages = funnel_data.get("pages", {})
+    total_matched = funnel_data.get("total_matched_load_events", 0)
+    total_expected = funnel_data.get("total_expected_load_events", 0)
+    coverage = funnel_data.get("funnel_coverage", 0.0)
+
+    score = min(aggregate_score, 5.0)
+
+    breakdown = f"Agregado por página: {score:.1f}"
+
+    # Per-page breakdown
+    stage_labels = {
+        "home": "Home", "category": "Categoria", "product": "Produto",
+        "cart": "Carrinho", "checkout": "Checkout",
+    }
+    for stage, page_data in pages.items():
+        label = stage_labels.get(stage, stage)
+        if isinstance(page_data, dict):
+            ps = page_data.get("page_score", 0)
+            accessible = page_data.get("accessible", False)
+        else:
+            ps = page_data.page_score
+            accessible = page_data.accessible
+        if not accessible:
+            breakdown += f" | {label}: inacessível"
+        else:
+            breakdown += f" | {label}: {ps:.1f}/5"
+
+    if total_expected > 0:
+        pct = int(total_matched / total_expected * 100)
+        breakdown += f" | Cobertura eventos load: {pct}%"
+
+    # Rating and comment
+    if score >= 4:
+        rating = "Excelente"
+        comment = f"DataLayer bem configurado em {int(coverage * 100)}% das páginas do funil com eventos GA4 corretos por etapa."
+    elif score >= 3:
+        rating = "Avançado"
+        comment = f"DataLayer presente nas principais páginas do funil, mas alguns eventos de carregamento estão faltando."
+    elif score >= 2:
+        rating = "Intermediário"
+        comment = f"DataLayer parcial — eventos de funil ausentes em páginas críticas. Coverage: {int(coverage * 100)}%."
+    elif score >= 1:
+        rating = "Básico"
+        comment = "DataLayer mínimo nas páginas do funil. Eventos essenciais ausentes em múltiplas etapas."
+    else:
+        rating = "Crítico"
+        comment = "DataLayer ausente ou inacessível nas páginas do funil. Rastreamento de eventos de conversão inexistente."
 
     return score, rating, comment, breakdown
 

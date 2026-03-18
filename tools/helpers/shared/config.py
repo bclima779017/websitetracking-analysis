@@ -265,6 +265,37 @@ class DataLayerResult(BaseModel):
     )
 
 
+class PageDataLayerResult(BaseModel):
+    """DataLayer analysis result for a single funnel page."""
+
+    stage: str = Field(..., description="Funnel stage (home, category, product, cart, checkout)")
+    url: str = Field(..., description="URL analyzed")
+    accessible: bool = Field(default=True, description="False if page redirected/login/error")
+    datalayer_exists: bool = Field(default=False, description="True if window.dataLayer exists")
+    events_detected: list[str] = Field(default_factory=list, description="GA4 events found on this page")
+    expected_events: list[dict[str, Any]] = Field(default_factory=list, description="Expected events from funnel-event-map")
+    matched_events: list[str] = Field(default_factory=list, description="Expected events that were found")
+    missing_load_events: list[str] = Field(default_factory=list, description="Load events missing (penalizes)")
+    missing_interaction_events: list[str] = Field(default_factory=list, description="Interaction events missing (informational)")
+    ecommerce_items_array: bool = Field(default=False, description="True if ecommerce items[] detected")
+    ga4_schema_compliant: bool = Field(default=False, description="True if GA4 schema compliant")
+    required_fields_present: list[str] = Field(default_factory=list, description="Required ecommerce fields found")
+    missing_required_fields: list[str] = Field(default_factory=list, description="Required ecommerce fields missing")
+    page_score: float = Field(default=0.0, ge=0, le=5, description="Score 0-5 for this page")
+    sample_events: list[dict[str, Any]] = Field(default_factory=list, description="Sample dataLayer events")
+
+
+class FunnelDataLayerResult(BaseModel):
+    """Aggregated DataLayer analysis across all funnel pages."""
+
+    pages: dict[str, PageDataLayerResult] = Field(default_factory=dict, description="stage -> result")
+    aggregate_score: float = Field(default=0.0, ge=0, le=5, description="Weighted average score")
+    funnel_coverage: float = Field(default=0.0, ge=0, le=1, description="Fraction of stages with data")
+    total_events_detected: int = Field(default=0, description="Total events across all pages")
+    total_expected_load_events: int = Field(default=0, description="Total expected load events")
+    total_matched_load_events: int = Field(default=0, description="Total matched load events")
+
+
 class ModuleScore(BaseModel):
     """Score for a single module."""
 
@@ -292,6 +323,10 @@ class DiagnosticReport(BaseModel):
     recommendations_summary: dict[str, list[str]] = Field(
         default_factory=dict,
         description="Grouped recommendations (quick_wins, medium_effort, high_effort)",
+    )
+    funnel_analysis: Optional[FunnelDataLayerResult] = Field(
+        default=None,
+        description="Per-page funnel DataLayer analysis (None if not available)",
     )
 
 
@@ -331,8 +366,12 @@ def load_ga4_taxonomy() -> dict[str, Any]:
     """
     Load GA4 events taxonomy from tools/assets/protocols/ga4-events-taxonomy.json.
 
-    Returns:
-        Dictionary of event definitions and field schemas
+    Returns a normalised dictionary with keys expected by consumers:
+        - "standard_events": dict mapping event_name -> event definition
+        - "ecommerce_fields": {"required": [...], "recommended": [...]}
+
+    The on-disk JSON uses "events" and separate "required_item_fields" /
+    "recommended_item_fields" top-level keys; this loader normalises them.
 
     Raises:
         FileNotFoundError: If GA4 taxonomy file does not exist
@@ -364,7 +403,19 @@ def load_ga4_taxonomy() -> dict[str, Any]:
         }
 
     with open(assets_path, encoding="utf-8") as f:
-        return json.load(f)
+        raw = json.load(f)
+
+    # Normalise: "events" -> "standard_events"
+    normalised: dict[str, Any] = {}
+    normalised["standard_events"] = raw.get("events", raw.get("standard_events", {}))
+
+    # Normalise: build "ecommerce_fields" from top-level item field dicts
+    normalised["ecommerce_fields"] = {
+        "required": list(raw.get("required_item_fields", {}).keys()),
+        "recommended": list(raw.get("recommended_item_fields", {}).keys()),
+    }
+
+    return normalised
 
 
 def load_scoring_rubrics() -> dict[str, dict[str, Any]]:
@@ -493,6 +544,55 @@ def load_funnel_heuristics() -> dict[str, Any]:
                 "/sitemap-index.xml", "/sitemaps.xml",
             ],
             "robots_txt_path": "/robots.txt",
+        }
+
+    with open(assets_path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_funnel_event_map() -> dict[str, Any]:
+    """
+    Load funnel event map from tools/assets/protocols/funnel-event-map.json.
+
+    Returns:
+        Dictionary with stage_weights and stages -> expected_events
+
+    Raises:
+        FileNotFoundError: If event map file does not exist
+        json.JSONDecodeError: If file is not valid JSON
+    """
+    assets_path = Path(__file__).parent.parent.parent / "assets" / "protocols" / "funnel-event-map.json"
+    if not assets_path.exists():
+        return {
+            "stage_weights": {
+                "product": 0.30, "cart": 0.25, "checkout": 0.20,
+                "category": 0.15, "home": 0.10,
+            },
+            "stages": {
+                "home": {"expected_events": [
+                    {"event": "page_view", "type": "load", "weight": 1.0, "required": True},
+                ]},
+                "category": {"expected_events": [
+                    {"event": "page_view", "type": "load", "weight": 0.3, "required": False},
+                    {"event": "view_item_list", "type": "load", "weight": 0.7, "required": True},
+                ]},
+                "product": {"expected_events": [
+                    {"event": "page_view", "type": "load", "weight": 0.2, "required": False},
+                    {"event": "view_item", "type": "load", "weight": 0.6, "required": True},
+                    {"event": "add_to_cart", "type": "interaction", "weight": 0.2, "required": False},
+                ]},
+                "cart": {"expected_events": [
+                    {"event": "page_view", "type": "load", "weight": 0.2, "required": False},
+                    {"event": "view_cart", "type": "load", "weight": 0.6, "required": True},
+                    {"event": "remove_from_cart", "type": "interaction", "weight": 0.2, "required": False},
+                ]},
+                "checkout": {"expected_events": [
+                    {"event": "page_view", "type": "load", "weight": 0.1, "required": False},
+                    {"event": "begin_checkout", "type": "load", "weight": 0.5, "required": True},
+                    {"event": "add_shipping_info", "type": "interaction", "weight": 0.2, "required": False},
+                    {"event": "add_payment_info", "type": "interaction", "weight": 0.2, "required": False},
+                ]},
+            },
         }
 
     with open(assets_path, encoding="utf-8") as f:

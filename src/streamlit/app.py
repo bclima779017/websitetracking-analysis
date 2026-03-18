@@ -34,8 +34,10 @@ from tools.helpers.shared.config import (
     DataLayerResult,
     ModuleScore,
     FunnelSelection,
+    FunnelDataLayerResult,
     ClassifiedUrl,
     FunnelStage,
+    load_funnel_event_map,
 )
 from tools.helpers.shared.url_validator import validate_url
 from tools.helpers.discover.page_selector import select_funnel_pages
@@ -43,6 +45,7 @@ from tools.helpers.intercept.tag_identifier import identify_tags
 from tools.helpers.detect.sst_detector import detect_sst
 from tools.helpers.report.scorer import score_module, calculate_overall
 from tools.helpers.report.report_generator import generate_report
+from tools.helpers.datalayer.funnel_analyzer import build_funnel_datalayer_result
 
 
 # ============================================================================
@@ -230,6 +233,79 @@ def render_funnel_pages(selection: FunnelSelection):
 
 
 # ============================================================================
+# FUNNEL DATALAYER DISPLAY
+# ============================================================================
+
+
+def render_funnel_datalayer(funnel_dl: dict):
+    """Render per-page funnel DataLayer analysis as a visual table.
+
+    Shows each funnel stage with event badges (green=present, red=missing,
+    gray=interaction) and a score progress bar.
+
+    Args:
+        funnel_dl: FunnelDataLayerResult as dict (from report JSON)
+    """
+    pages = funnel_dl.get("pages", {})
+    if not pages:
+        return
+
+    st.markdown("### 📊 DataLayer por Página do Funil")
+
+    aggregate = funnel_dl.get("aggregate_score", 0)
+    coverage = funnel_dl.get("funnel_coverage", 0)
+    total_matched = funnel_dl.get("total_matched_load_events", 0)
+    total_expected = funnel_dl.get("total_expected_load_events", 0)
+
+    st.caption(
+        f"Score agregado: {aggregate:.1f}/5 · "
+        f"Cobertura: {int(coverage * 100)}% · "
+        f"Eventos load: {total_matched}/{total_expected}"
+    )
+
+    for stage_key, (icon, label) in STAGE_LABELS.items():
+        page_data = pages.get(stage_key)
+        if page_data is None:
+            continue
+
+        accessible = page_data.get("accessible", False)
+        page_score = page_data.get("page_score", 0)
+
+        col1, col2, col3 = st.columns([1.5, 5, 1.5])
+
+        with col1:
+            st.markdown(f"**{icon} {label}**")
+
+        with col2:
+            if not accessible:
+                st.markdown("⚪ *Página inacessível (login/redirect)*")
+            elif not page_data.get("datalayer_exists", False):
+                st.markdown("❌ *DataLayer não encontrado*")
+            else:
+                badges = []
+                for ev in page_data.get("matched_events", []):
+                    badges.append(f"🟢 `{ev}`")
+                for ev in page_data.get("missing_load_events", []):
+                    badges.append(f"🔴 `{ev}`")
+                for ev in page_data.get("missing_interaction_events", []):
+                    badges.append(f"⚪ `{ev}`")
+                st.markdown(" ".join(badges) if badges else "✅ Sem eventos esperados")
+
+        with col3:
+            if accessible:
+                st.progress(min(page_score / 5.0, 1.0), text=f"{page_score:.1f}/5")
+            else:
+                st.progress(0, text="—")
+
+        # Expandable sample events
+        if accessible and page_data.get("sample_events"):
+            with st.expander(f"Amostra de eventos — {label}", expanded=False):
+                st.json(page_data["sample_events"][:3])
+
+    st.markdown("---")
+
+
+# ============================================================================
 # PIPELINE
 # ============================================================================
 
@@ -260,10 +336,19 @@ def run_diagnostic(url: str) -> dict:
 
     # Step 1.5: Page Discovery
     progress.progress(8, text="Etapa 1.5/6 — Descobrindo páginas do funil...")
+    funnel_pages_dict = None
     try:
         selection: FunnelSelection = select_funnel_pages(final_url)
         st.session_state["funnel_selection"] = selection
         render_funnel_pages(selection)
+
+        # Build {stage: url} dict for subprocess
+        funnel_pages_dict = {}
+        for stage_key, page_obj in selection.pages.items():
+            if page_obj is not None:
+                funnel_pages_dict[stage_key] = page_obj.url
+        if not funnel_pages_dict:
+            funnel_pages_dict = None
     except Exception as e:
         st.warning(f"Descoberta de páginas falhou: {e}. Continuando com URL principal.")
         st.session_state["funnel_selection"] = None
@@ -273,22 +358,28 @@ def run_diagnostic(url: str) -> dict:
 
     script = PROJECT_ROOT / "tools" / "helpers" / "run_browser_pipeline.py"
 
+    cmd = [sys.executable, str(script), final_url, domain]
+    timeout = 120
+    if funnel_pages_dict:
+        cmd.extend(["--pages", json.dumps(funnel_pages_dict)])
+        timeout = 180  # More time for multi-page analysis
+
     try:
         proc = subprocess.run(
-            [sys.executable, str(script), final_url, domain],
+            cmd,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout,
             cwd=str(PROJECT_ROOT),
         )
 
         if proc.stderr:
             st.caption(f"Log: {proc.stderr.strip()[:200]}")
 
-        pipeline = json.loads(proc.stdout or '{"requests":[],"dl_data":{},"attr_data":{}}')
+        pipeline = json.loads(proc.stdout or '{"requests":[],"dl_data":{},"attr_data":{},"per_page_dl":{}}')
 
     except subprocess.TimeoutExpired:
-        st.error("Timeout: a análise excedeu 120 segundos.")
+        st.error(f"Timeout: a análise excedeu {timeout} segundos.")
         return None
     except Exception as e:
         st.error(f"Erro no pipeline: {type(e).__name__}: {e}")
@@ -330,13 +421,25 @@ def run_diagnostic(url: str) -> dict:
     raw_dl = pipeline.get("dl_data", {})
     dl_data = DataLayerResult(**raw_dl) if raw_dl else DataLayerResult(datalayer_exists=False)
 
+    # Build per-page funnel DataLayer result (if available)
+    raw_per_page_dl = pipeline.get("per_page_dl", {})
+    funnel_dl_result = None
+    funnel_data_for_scorer = None
+    if raw_per_page_dl:
+        try:
+            event_map = load_funnel_event_map()
+            funnel_dl_result = build_funnel_datalayer_result(raw_per_page_dl, event_map)
+            funnel_data_for_scorer = funnel_dl_result.model_dump()
+        except Exception as e:
+            st.warning(f"Erro na análise de funil por página: {e}")
+
     # Step 6: Scoring & Report
     progress.progress(90, text="Etapa 6/6 — Calculando scores e gerando relatório...")
 
     tracking_score = score_module("tracking_infrastructure", tag_data.model_dump())
     attribution_score = score_module("attribution_health", attr_data.model_dump())
     sst_score = score_module("server_side_tracking", sst_data.model_dump())
-    datalayer_score = score_module("datalayer_depth", dl_data.model_dump())
+    datalayer_score = score_module("datalayer_depth", dl_data.model_dump(), funnel_data=funnel_data_for_scorer)
 
     all_scores = [tracking_score, attribution_score, sst_score, datalayer_score]
     overall = calculate_overall(all_scores)
@@ -349,6 +452,7 @@ def run_diagnostic(url: str) -> dict:
         datalayer_data=dl_data,
         scores=all_scores,
         overall=overall,
+        funnel_datalayer=funnel_dl_result,
     )
 
     report = diagnostic.model_dump()
@@ -447,6 +551,11 @@ def render_dashboard(report: dict):
                 unsafe_allow_html=True,
             )
             st.caption(module.get("comment", ""))
+
+    # Funnel DataLayer per-page analysis
+    funnel_analysis = report.get("funnel_analysis")
+    if funnel_analysis and funnel_analysis.get("pages"):
+        render_funnel_datalayer(funnel_analysis)
 
     # Top issues
     top_issues = report.get("top_issues", [])
