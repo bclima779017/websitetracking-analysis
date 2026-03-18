@@ -338,7 +338,7 @@ def run_diagnostic(url: str) -> dict:
     progress.progress(8, text="Etapa 1.5/6 — Descobrindo páginas do funil...")
     funnel_pages_dict = None
     try:
-        selection: FunnelSelection = select_funnel_pages(final_url)
+        selection: FunnelSelection = select_funnel_pages(final_url, use_spider=False)
         st.session_state["funnel_selection"] = selection
         render_funnel_pages(selection)
 
@@ -360,9 +360,13 @@ def run_diagnostic(url: str) -> dict:
 
     cmd = [sys.executable, str(script), final_url, domain]
     timeout = 120
+    gaps_list = selection.gaps if selection else []
     if funnel_pages_dict:
         cmd.extend(["--pages", json.dumps(funnel_pages_dict)])
         timeout = 180  # More time for multi-page analysis
+    if gaps_list:
+        cmd.extend(["--gaps", json.dumps(gaps_list)])
+        timeout = 180
 
     try:
         proc = subprocess.run(
@@ -384,6 +388,28 @@ def run_diagnostic(url: str) -> dict:
     except Exception as e:
         st.error(f"Erro no pipeline: {type(e).__name__}: {e}")
         return None
+
+    # Merge spider-discovered pages back into FunnelSelection for display
+    spider_pages = pipeline.get("funnel_pages", {})
+    spider_stats = pipeline.get("spider_stats", {})
+    if spider_pages and selection:
+        for stage_key, page_info in spider_pages.items():
+            if page_info and selection.pages.get(stage_key) is None:
+                selection.pages[stage_key] = ClassifiedUrl(
+                    url=page_info["url"],
+                    stage=FunnelStage(page_info["stage"]),
+                    confidence=page_info["confidence"],
+                    source=page_info.get("source", "spider"),
+                    classification_signals=page_info.get("signals", []),
+                )
+        selection.discovery_stats["spider_urls"] = spider_stats.get("spider_urls", 0)
+        selection.total_discovered += spider_stats.get("spider_urls", 0)
+        selection.gaps = [
+            stage for stage in ["home", "category", "product", "cart", "checkout"]
+            if selection.pages.get(stage) is None
+        ]
+        st.session_state["funnel_selection"] = selection
+        render_funnel_pages(selection)
 
     # Parse subprocess results into Pydantic models
     raw_requests = pipeline.get("requests", [])

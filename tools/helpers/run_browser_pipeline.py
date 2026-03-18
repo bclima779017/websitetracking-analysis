@@ -21,7 +21,13 @@ import json
 import time
 import random
 import asyncio
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
+
+# Add project root to sys.path so tools.helpers.* imports work
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 
 # ---------------------------------------------------------------------------
@@ -484,14 +490,118 @@ async def test_attribution(browser, url):
 
 
 # ---------------------------------------------------------------------------
+# Spider: fill funnel gaps using existing browser (before other stages)
+# ---------------------------------------------------------------------------
+
+async def spider_for_gaps(
+    browser,
+    base_url: str,
+    existing_pages: dict[str, str],
+    gaps: list[str],
+) -> dict:
+    """BFS spider to fill funnel stage gaps, reusing the subprocess browser.
+
+    Imports classification logic from page_selector.py (pure functions +
+    async spider). Merges spider discoveries with existing sitemap pages.
+
+    Args:
+        browser: Already-launched Playwright Browser instance.
+        existing_pages: {stage: url} from sitemap phase.
+        gaps: Stage names that still need a candidate page.
+
+    Returns:
+        Dict with 'funnel_pages' ({stage: ClassifiedUrl dict}) and
+        'spider_stats' ({spider_urls: int}).
+    """
+    from tools.helpers.discover.page_selector import (
+        classify_url,
+        _select_best_per_stage,
+        _spider_site,
+    )
+    from tools.helpers.shared.config import (
+        ClassifiedUrl,
+        FunnelStage,
+        load_funnel_heuristics,
+    )
+
+    heuristics = load_funnel_heuristics()
+
+    # Rebuild already_classified from existing_pages
+    already_classified: dict[FunnelStage, list[ClassifiedUrl]] = {}
+    for stage_key, url in existing_pages.items():
+        try:
+            stage_enum = FunnelStage(stage_key)
+        except ValueError:
+            continue
+        classified = classify_url(url, heuristics)
+        classified.source = "sitemap"
+        classified.stage = stage_enum
+        already_classified.setdefault(stage_enum, []).append(classified)
+
+    # Run BFS spider (async — works here because we're in a real asyncio.run)
+    spider_results = await _spider_site(
+        base_url, browser, already_classified, heuristics,
+    )
+
+    # Merge spider results into candidates
+    for classified in spider_results:
+        if classified.stage != FunnelStage.OTHER:
+            already_classified.setdefault(classified.stage, []).append(classified)
+
+    # Select best per stage
+    best = _select_best_per_stage(already_classified)
+
+    # Serialize to plain dicts
+    funnel_pages = {}
+    for stage_key, cu in best.items():
+        if cu is not None:
+            funnel_pages[stage_key] = {
+                "url": cu.url,
+                "stage": cu.stage.value if hasattr(cu.stage, "value") else cu.stage,
+                "confidence": cu.confidence,
+                "source": cu.source or "spider",
+                "signals": cu.classification_signals,
+            }
+
+    return {
+        "funnel_pages": funnel_pages,
+        "spider_stats": {"spider_urls": len(spider_results)},
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main: single browser, all stages, JSON output
 # ---------------------------------------------------------------------------
 
-async def run_all(url: str, domain: str, funnel_pages: dict[str, str] | None = None) -> dict:
+async def run_all(
+    url: str,
+    domain: str,
+    funnel_pages: dict[str, str] | None = None,
+    gaps: list[str] | None = None,
+) -> dict:
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
+
+        # Spider phase: fill funnel gaps before other stages
+        spider_result: dict = {}
+        final_funnel_pages = dict(funnel_pages or {})
+        if gaps:
+            print(f"Spider: filling gaps {gaps}", file=sys.stderr)
+            try:
+                spider_result = await spider_for_gaps(
+                    browser, url, final_funnel_pages, gaps,
+                )
+                for stage_key, page_info in spider_result.get("funnel_pages", {}).items():
+                    if page_info and stage_key not in final_funnel_pages:
+                        final_funnel_pages[stage_key] = page_info["url"]
+                print(
+                    f"Spider: found {spider_result.get('spider_stats', {}).get('spider_urls', 0)} pages",
+                    file=sys.stderr,
+                )
+            except Exception as e:
+                print(f"Spider failed: {type(e).__name__}: {e}", file=sys.stderr)
 
         # Main context for network + dataLayer
         context = await browser.new_context(
@@ -517,10 +627,10 @@ async def run_all(url: str, domain: str, funnel_pages: dict[str, str] | None = N
         # Stage 3: Attribution (separate context)
         attr_data = await test_attribution(browser, url)
 
-        # Per-page DataLayer analysis (new)
+        # Per-page DataLayer analysis (uses merged pages including spider results)
         per_page_dl = {}
-        if funnel_pages:
-            for stage, page_url in funnel_pages.items():
+        if final_funnel_pages:
+            for stage, page_url in final_funnel_pages.items():
                 print(f"Inspecting DataLayer: {stage} -> {page_url}", file=sys.stderr)
                 per_page_dl[stage] = await inspect_page_datalayer(browser, page_url)
 
@@ -531,6 +641,8 @@ async def run_all(url: str, domain: str, funnel_pages: dict[str, str] | None = N
         "dl_data": dl_data,
         "attr_data": attr_data,
         "per_page_dl": per_page_dl,
+        "funnel_pages": spider_result.get("funnel_pages", {}),
+        "spider_stats": spider_result.get("spider_stats", {}),
     }
 
 
@@ -542,23 +654,33 @@ def main():
     url = sys.argv[1]
     domain = sys.argv[2]
 
-    # Parse optional --pages argument
+    # Parse optional --pages and --gaps arguments
     funnel_pages = None
-    for i, arg in enumerate(sys.argv[3:], start=3):
-        if arg == "--pages" and i + 1 < len(sys.argv):
+    gaps = None
+    i = 3
+    while i < len(sys.argv):
+        if sys.argv[i] == "--pages" and i + 1 < len(sys.argv):
             try:
                 funnel_pages = json.loads(sys.argv[i + 1])
             except json.JSONDecodeError as e:
                 print(f"Invalid --pages JSON: {e}", file=sys.stderr)
-            break
+            i += 2
+        elif sys.argv[i] == "--gaps" and i + 1 < len(sys.argv):
+            try:
+                gaps = json.loads(sys.argv[i + 1])
+            except json.JSONDecodeError as e:
+                print(f"Invalid --gaps JSON: {e}", file=sys.stderr)
+            i += 2
+        else:
+            i += 1
 
     try:
-        result = asyncio.run(run_all(url, domain, funnel_pages=funnel_pages))
+        result = asyncio.run(run_all(url, domain, funnel_pages=funnel_pages, gaps=gaps))
     except Exception as e:
         print(f"Pipeline error: {type(e).__name__}: {e}", file=sys.stderr)
         result = {"requests": [], "dl_data": {}, "attr_data": {}, "per_page_dl": {}}
 
-    print(json.dumps(result))
+    print(json.dumps(result, default=str))
 
 
 if __name__ == "__main__":

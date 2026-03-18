@@ -52,14 +52,23 @@ def identify_tags(requests: list[NetworkRequest], patterns: dict[str, str] | Non
                     gtm_ids.append(gtm_id)
 
     # Extract Google Analytics 4 (GA4)
+    # GA4 loads via googletagmanager.com/gtag/js?id=G-* and sends data to
+    # analytics.google.com/g/collect — both patterns must be checked
     ga4_ids: list[str] = []
     ga4_status: int | None = None
+    ga4_pattern = patterns.get("ga4_measurement", r"G-[A-Z0-9]{6,10}")
 
     for req in requests:
-        if "google-analytics.com" in req.url or "googleanalytics.com" in req.url:
+        is_ga4_url = (
+            "google-analytics.com" in req.url
+            or "googleanalytics.com" in req.url
+            or "analytics.google.com" in req.url
+            or ("googletagmanager.com/gtag/js" in req.url and "id=G-" in req.url)
+        )
+        if is_ga4_url:
             if ga4_status is None:
                 ga4_status = req.status
-            match = re.search(patterns.get("ga4_measurement", r"G-[A-Z0-9]{10}"), req.url)
+            match = re.search(ga4_pattern, req.url)
             if match:
                 ga4_id = match.group(0)
                 if ga4_id not in ga4_ids:

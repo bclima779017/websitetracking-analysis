@@ -155,32 +155,7 @@ async def _fetch_and_parse(
         except (gzip.BadGzipFile, OSError):
             return []
 
-    return _parse_sitemap_xml(content, origin, client, depth, max_depth)
-
-
-def _parse_sitemap_xml(
-    content: bytes,
-    origin: str,
-    client: httpx.AsyncClient | None = None,
-    depth: int = 0,
-    max_depth: int = 2,
-) -> list[DiscoveredUrl]:
-    """
-    Parse sitemap XML content into DiscoveredUrl objects.
-
-    Handles both <urlset> (leaf sitemap with <url> entries) and
-    <sitemapindex> (index with <sitemap> entries pointing to child sitemaps).
-
-    Args:
-        content: Raw XML bytes
-        origin: Site origin for resolving relative URLs
-        client: httpx client for fetching child sitemaps (index case)
-        depth: Current recursion depth
-        max_depth: Maximum recursion depth
-
-    Returns:
-        List of DiscoveredUrl objects.
-    """
+    # Parse XML
     try:
         root = ET.fromstring(content)
     except ET.ParseError:
@@ -192,45 +167,47 @@ def _parse_sitemap_xml(
     if tag.startswith("{"):
         ns = tag[: tag.index("}") + 1]
 
-    discovered: list[DiscoveredUrl] = []
-
-    # Check if this is a sitemap index
+    # Check if this is a sitemap index — recurse into child sitemaps
     sitemap_entries = root.findall(f"{ns}sitemap")
-    if sitemap_entries and client is not None:
-        # This is a sitemapindex — fetch child sitemaps
+    if sitemap_entries:
         child_urls: list[str] = []
         for entry in sitemap_entries:
             loc = entry.find(f"{ns}loc")
             if loc is not None and loc.text:
                 child_urls.append(loc.text.strip())
 
-        # Fetch children (limited concurrency)
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Already in async context — schedule child fetches
-            import concurrent.futures
-
-            async def _fetch_children() -> list[DiscoveredUrl]:
-                results: list[DiscoveredUrl] = []
-                for child_url in child_urls[:10]:  # Limit to 10 child sitemaps
-                    child_results = await _fetch_and_parse(
-                        client, child_url, origin, depth + 1, max_depth
-                    )
-                    results.extend(child_results)
-                return results
-
-            # Use a task to fetch children
-            try:
-                task = loop.create_task(_fetch_children())
-                # Can't await here (sync function), so return empty and let caller handle
-                # This case shouldn't happen in practice since _fetch_and_parse is async
-                return []
-            except RuntimeError:
-                return []
-        return []
+        discovered: list[DiscoveredUrl] = []
+        for child_url in child_urls[:10]:  # Limit to 10 child sitemaps
+            child_results = await _fetch_and_parse(
+                client, child_url, origin, depth + 1, max_depth,
+            )
+            discovered.extend(child_results)
+        return discovered
 
     # This is a urlset — extract URLs
+    return _parse_urlset(root, ns, origin)
+
+
+def _parse_urlset(
+    root: ET.Element,
+    ns: str,
+    origin: str,
+) -> list[DiscoveredUrl]:
+    """
+    Parse a <urlset> XML element into DiscoveredUrl objects.
+
+    Args:
+        root: Parsed XML root element
+        ns: XML namespace prefix (e.g., '{http://...}')
+        origin: Site origin for resolving relative URLs and domain filtering
+
+    Returns:
+        List of DiscoveredUrl objects.
+    """
+    discovered: list[DiscoveredUrl] = []
     url_entries = root.findall(f"{ns}url")
+    parsed_origin = urlparse(origin)
+
     for entry in url_entries:
         loc = entry.find(f"{ns}loc")
         if loc is None or not loc.text:
@@ -240,7 +217,6 @@ def _parse_sitemap_xml(
 
         # Only include URLs from the same domain
         parsed_url = urlparse(url)
-        parsed_origin = urlparse(origin)
         if parsed_url.netloc and parsed_url.netloc != parsed_origin.netloc:
             continue
 
