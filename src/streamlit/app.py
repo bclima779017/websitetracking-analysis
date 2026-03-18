@@ -33,8 +33,12 @@ from tools.helpers.shared.config import (
     SSTResult,
     DataLayerResult,
     ModuleScore,
+    FunnelSelection,
+    ClassifiedUrl,
+    FunnelStage,
 )
 from tools.helpers.shared.url_validator import validate_url
+from tools.helpers.discover.page_selector import select_funnel_pages
 from tools.helpers.intercept.tag_identifier import identify_tags
 from tools.helpers.detect.sst_detector import detect_sst
 from tools.helpers.report.scorer import score_module, calculate_overall
@@ -138,6 +142,94 @@ def extract_domain(url: str) -> str:
 
 
 # ============================================================================
+# FUNNEL PAGES DISPLAY
+# ============================================================================
+
+STAGE_LABELS = {
+    "home": ("🏠", "Home"),
+    "category": ("📂", "Categoria"),
+    "product": ("📦", "Produto"),
+    "cart": ("🛒", "Carrinho"),
+    "checkout": ("💳", "Checkout"),
+}
+
+
+def render_funnel_pages(selection: FunnelSelection):
+    """Render the discovered funnel pages as a visual table.
+
+    Shows each funnel stage with its selected URL, confidence score,
+    discovery source, and classification signals. Highlights gaps
+    where no candidate page was found.
+
+    Args:
+        selection: FunnelSelection with pages, stats, gaps, warnings.
+    """
+    stats = selection.discovery_stats
+    sitemap_count = stats.get("sitemap_urls", 0)
+    spider_count = stats.get("spider_urls", 0)
+
+    st.markdown("### 🗺️ Páginas do Funil Identificadas")
+    st.caption(
+        f"{selection.total_discovered} URLs descobertas "
+        f"({sitemap_count} via sitemap, {spider_count} via spider) · "
+        f"{selection.total_classified} classificadas"
+    )
+
+    # Build table rows
+    for stage_key, (icon, label) in STAGE_LABELS.items():
+        page: ClassifiedUrl | None = selection.pages.get(stage_key)
+
+        if page is not None:
+            confidence_pct = int(page.confidence * 100)
+            # Truncate long URLs for display
+            display_url = page.url
+            if len(display_url) > 80:
+                display_url = display_url[:77] + "..."
+
+            source_badge = "🟢 sitemap" if page.source == "sitemap" else "🔵 spider"
+            if page.source == "forced":
+                source_badge = "⚪ padrão"
+
+            signals = ", ".join(page.classification_signals[:3]) if page.classification_signals else "—"
+
+            col1, col2, col3, col4 = st.columns([1.5, 4, 1.5, 3])
+            with col1:
+                st.markdown(f"**{icon} {label}**")
+            with col2:
+                st.markdown(f"[{display_url}]({page.url})")
+            with col3:
+                st.progress(page.confidence, text=f"{confidence_pct}%")
+            with col4:
+                st.caption(f"{source_badge} · {signals}")
+        else:
+            col1, col2, col3, col4 = st.columns([1.5, 4, 1.5, 3])
+            with col1:
+                st.markdown(f"**{icon} {label}**")
+            with col2:
+                st.markdown("⚠️ *Nenhuma página encontrada*")
+            with col3:
+                st.progress(0, text="0%")
+            with col4:
+                st.caption("—")
+
+    # Gaps warning
+    if selection.gaps:
+        gap_labels = [STAGE_LABELS.get(g, ("", g))[1] for g in selection.gaps]
+        st.warning(
+            f"**Gaps no funil:** {', '.join(gap_labels)}. "
+            "Essas etapas não puderam ser identificadas automaticamente."
+        )
+
+    # Non-fatal warnings
+    if selection.warnings:
+        with st.expander("⚠️ Avisos da descoberta"):
+            for w in selection.warnings:
+                st.caption(f"• {w}")
+
+    st.markdown("---")
+
+
+# ============================================================================
 # PIPELINE
 # ============================================================================
 
@@ -165,6 +257,16 @@ def run_diagnostic(url: str) -> dict:
         return None
 
     st.success(f"URL validada: {final_url}")
+
+    # Step 1.5: Page Discovery
+    progress.progress(8, text="Etapa 1.5/6 — Descobrindo páginas do funil...")
+    try:
+        selection: FunnelSelection = select_funnel_pages(final_url)
+        st.session_state["funnel_selection"] = selection
+        render_funnel_pages(selection)
+    except Exception as e:
+        st.warning(f"Descoberta de páginas falhou: {e}. Continuando com URL principal.")
+        st.session_state["funnel_selection"] = None
 
     # Steps 2, 3, 5: Browser pipeline in subprocess (complete process isolation)
     progress.progress(15, text="Etapas 2-5/6 — Analisando página...")
@@ -296,6 +398,18 @@ def render_dashboard(report: dict):
 
     overall = report.get("overall_maturity", {})
     modules = report.get("modules", {})
+
+    # Funnel pages summary (if available from discovery step)
+    funnel_sel = st.session_state.get("funnel_selection")
+    if funnel_sel is not None:
+        with st.expander("🗺️ Páginas do Funil Analisadas", expanded=False):
+            for stage_key, (icon, label) in STAGE_LABELS.items():
+                page_data = funnel_sel.pages.get(stage_key)
+                if page_data is not None:
+                    conf = int(page_data.confidence * 100)
+                    st.markdown(f"**{icon} {label}** — [{page_data.url}]({page_data.url}) ({conf}%)")
+                else:
+                    st.markdown(f"**{icon} {label}** — ⚠️ Não identificada")
 
     # Overall score header
     score = overall.get("score", 0)
