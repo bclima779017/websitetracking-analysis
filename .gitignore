@@ -32,3 +32,6 @@ desktop.ini
 # IDE
 .vscode/settings.json
 .idea/
+
+# Claude Code
+.claude/

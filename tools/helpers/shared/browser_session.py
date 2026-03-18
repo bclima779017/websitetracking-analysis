@@ -10,7 +10,8 @@ Architecture:
     ├── context_main   → network interception + dataLayer extraction (same page)
     └── context_attr   → attribution testing (separate context with UTM URL)
 
-Both contexts run in parallel via ThreadPoolExecutor from app.py.
+All Playwright calls run in the same thread (greenlet constraint).
+Speed gains come from shared browser + page reuse, not thread parallelism.
 """
 
 from __future__ import annotations

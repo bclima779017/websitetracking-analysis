@@ -8,6 +8,8 @@ Usage:
 """
 
 import sys
+import json
+import subprocess
 import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
@@ -19,8 +21,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import streamlit as st
 
-# Thread pool with 2 workers: main pipeline + parallel attribution
-_executor = ThreadPoolExecutor(max_workers=2)
+# Thread pool for async helpers (URL validation only)
+_executor = ThreadPoolExecutor(max_workers=1)
 
 # Pipeline helpers
 from tools.helpers.shared.config import (
@@ -33,7 +35,6 @@ from tools.helpers.shared.config import (
     ModuleScore,
 )
 from tools.helpers.shared.url_validator import validate_url
-from tools.helpers.shared.browser_session import PipelineSession
 from tools.helpers.intercept.tag_identifier import identify_tags
 from tools.helpers.detect.sst_detector import detect_sst
 from tools.helpers.report.scorer import score_module, calculate_overall
@@ -120,17 +121,13 @@ def get_score_emoji(score: float) -> str:
 
 
 def run_async(coro):
-    """Run an async coroutine from sync Streamlit context."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, coro).result()
-        else:
-            return loop.run_until_complete(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
+    """Run an async coroutine from sync Streamlit context via ThreadPoolExecutor.
+
+    Always delegates to asyncio.run() in a separate thread to avoid
+    NotImplementedError on Windows ProactorEventLoop.
+    """
+    future = _executor.submit(asyncio.run, coro)
+    return future.result(timeout=30)
 
 
 def extract_domain(url: str) -> str:
@@ -144,65 +141,12 @@ def extract_domain(url: str) -> str:
 # PIPELINE
 # ============================================================================
 
-def _run_pipeline_in_session(final_url: str, domain: str) -> dict:
-    """
-    Run stages 2-5 inside a shared PipelineSession (single browser).
-
-    Called from a ThreadPoolExecutor worker to avoid Streamlit asyncio conflicts.
-    Attribution runs in parallel with DataLayer extraction via a second thread.
-
-    Returns:
-        dict with keys: requests, tag_data, attr_data, sst_data, dl_data
-    """
-    from concurrent.futures import ThreadPoolExecutor as _TPE
-
-    with PipelineSession() as session:
-        # Stage 2: Network interception (CDP + scroll)
-        try:
-            requests = session.intercept_network(final_url)
-        except Exception as e:
-            print(f"Network interception error: {e}")
-            requests = []
-
-        # Stage 2b: Tag identification (pure Python, instant)
-        tag_data = identify_tags(requests)
-
-        # Stage 4: SST detection (pure Python, instant, depends on requests)
-        sst_data = detect_sst(requests, domain)
-
-        # Stage 3 + 5 in parallel:
-        #   - Attribution: new context in same browser (navigates UTM URL)
-        #   - DataLayer: reuses the already-rendered page (no re-navigation!)
-        with _TPE(max_workers=2) as pool:
-            attr_future = pool.submit(session.test_attribution, final_url)
-            dl_future = pool.submit(session.inspect_datalayer)
-
-            try:
-                attr_data = attr_future.result(timeout=30)
-            except Exception as e:
-                print(f"Attribution test error: {e}")
-                attr_data = AttributionResult()
-
-            try:
-                dl_data = dl_future.result(timeout=30)
-            except Exception as e:
-                print(f"DataLayer inspection error: {e}")
-                dl_data = DataLayerResult(datalayer_exists=False)
-
-    return {
-        "requests": requests,
-        "tag_data": tag_data,
-        "attr_data": attr_data,
-        "sst_data": sst_data,
-        "dl_data": dl_data,
-    }
-
-
 def run_diagnostic(url: str) -> dict:
     """
     Execute the full 6-step diagnostic pipeline.
 
-    Uses a single shared browser with parallel execution of independent stages.
+    Browser stages (2, 3, 5) run in a single subprocess to completely
+    isolate Playwright from Streamlit's event loop on Windows.
     Returns the final JSON report matching sample-diagnostic.json contract.
     """
     progress = st.progress(0, text="Iniciando diagnóstico...")
@@ -222,25 +166,41 @@ def run_diagnostic(url: str) -> dict:
 
     st.success(f"URL validada: {final_url}")
 
-    # Steps 2-5: Run in shared browser session (single thread to Streamlit)
-    progress.progress(15, text="Etapas 2-5/6 — Analisando página (browser único)...")
+    # Steps 2, 3, 5: Browser pipeline in subprocess (complete process isolation)
+    progress.progress(15, text="Etapas 2-5/6 — Analisando página...")
+
+    script = PROJECT_ROOT / "tools" / "helpers" / "run_browser_pipeline.py"
 
     try:
-        future = _executor.submit(_run_pipeline_in_session, final_url, domain)
-        pipeline = future.result(timeout=120)
+        proc = subprocess.run(
+            [sys.executable, str(script), final_url, domain],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(PROJECT_ROOT),
+        )
 
-        requests = pipeline["requests"]
-        tag_data = pipeline["tag_data"]
-        attr_data = pipeline["attr_data"]
-        sst_data = pipeline["sst_data"]
-        dl_data = pipeline["dl_data"]
+        if proc.stderr:
+            st.caption(f"Log: {proc.stderr.strip()[:200]}")
 
+        pipeline = json.loads(proc.stdout or '{"requests":[],"dl_data":{},"attr_data":{}}')
+
+    except subprocess.TimeoutExpired:
+        st.error("Timeout: a análise excedeu 120 segundos.")
+        return None
     except Exception as e:
         st.error(f"Erro no pipeline: {type(e).__name__}: {e}")
         return None
 
-    # Display captured info
+    # Parse subprocess results into Pydantic models
+    raw_requests = pipeline.get("requests", [])
+    requests: list[NetworkRequest] = [NetworkRequest(**r) for r in raw_requests]
+
     st.info(f"{len(requests)} requests interceptados")
+
+    # Step 2b: Tag Identification (pure Python)
+    progress.progress(60, text="Etapa 2/6 — Identificando tags...")
+    tag_data: TagIdentification = identify_tags(requests)
 
     tags_found = []
     if tag_data.gtm_ids:
@@ -256,6 +216,17 @@ def run_diagnostic(url: str) -> dict:
         st.info(f"Tags detectadas: {' | '.join(tags_found)}")
     else:
         st.warning("Nenhuma tag de mídia detectada")
+
+    # Step 4: SST Detection (pure Python)
+    progress.progress(70, text="Etapa 4/6 — Detectando Server-Side Tracking...")
+    sst_data: SSTResult = detect_sst(requests, domain)
+
+    # Parse attribution and dataLayer from subprocess
+    raw_attr = pipeline.get("attr_data", {})
+    attr_data = AttributionResult(**raw_attr) if raw_attr else AttributionResult()
+
+    raw_dl = pipeline.get("dl_data", {})
+    dl_data = DataLayerResult(**raw_dl) if raw_dl else DataLayerResult(datalayer_exists=False)
 
     # Step 6: Scoring & Report
     progress.progress(90, text="Etapa 6/6 — Calculando scores e gerando relatório...")
