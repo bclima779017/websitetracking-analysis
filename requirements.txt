@@ -1,0 +1,18 @@
+# Blind Analytics — Dependências Python
+# Instalar: pip install -r requirements.txt
+
+# Core
+pydantic>=2.0.0
+httpx>=0.25.0
+
+# Browser automation
+playwright>=1.40.0
+playwright-stealth>=1.0.6
+
+# Streamlit (Estágio B)
+streamlit>=1.30.0
+
+# Dev
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+ruff>=0.5.0

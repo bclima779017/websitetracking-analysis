@@ -1,0 +1,319 @@
+{
+  "domain": "exemplo.com.br",
+  "audit_timestamp": "2026-03-17T10:30:00Z",
+  "modules": {
+    "tracking_infrastructure": {
+      "score": 4,
+      "max_score": 5,
+      "comment": "As tags base (GTM e GA4) estão instaladas e operacionais. O Pixel do Meta está presente, mas não utiliza a funcionalidade de Advanced Matching, o que limita a qualidade dos públicos para remarketing.",
+      "data": {
+        "gtm_installed": true,
+        "gtm_ids": ["GTM-ABC123"],
+        "ga4_installed": true,
+        "ga4_ids": ["G-XYZ789"],
+        "meta_pixel_installed": true,
+        "meta_pixel_ids": ["123456789"],
+        "meta_advanced_matching": false,
+        "linkedin_insight_installed": false,
+        "tags_with_errors": [],
+        "duplicate_tags": false
+      },
+      "evidence": [
+        {
+          "check": "Google Tag Manager (GTM)",
+          "result": "pass",
+          "score_impact": "+1",
+          "detail": "Container GTM-ABC123 carregado corretamente via googletagmanager.com/gtm.js",
+          "source": "Network request interceptado ao carregar a homepage",
+          "url_captured": "https://www.googletagmanager.com/gtm.js?id=GTM-ABC123"
+        },
+        {
+          "check": "Google Analytics 4 (GA4)",
+          "result": "pass",
+          "score_impact": "+1",
+          "detail": "Medição G-XYZ789 ativa. Eventos page_view disparando corretamente no carregamento.",
+          "source": "Request de coleta GA4 interceptado",
+          "url_captured": "https://www.google-analytics.com/g/collect?v=2&tid=G-XYZ789&_p=98234"
+        },
+        {
+          "check": "Meta Pixel (base)",
+          "result": "pass",
+          "score_impact": "+1",
+          "detail": "Pixel ID 123456789 inicializado. Evento PageView disparado no carregamento.",
+          "source": "Script fbevents.js carregado + fbq('init') detectado no DOM",
+          "url_captured": "https://connect.facebook.net/en_US/fbevents.js"
+        },
+        {
+          "check": "Meta Advanced Matching",
+          "result": "fail",
+          "score_impact": "0 (não penaliza, mas impede +1)",
+          "detail": "O fbq('init') não contém o segundo parâmetro com dados do usuário (email, phone). Sem Advanced Matching, a taxa de match com perfis cai ~30%.",
+          "source": "Inspeção do código fbq('init', '123456789') — sem objeto de user data",
+          "url_captured": null
+        },
+        {
+          "check": "LinkedIn Insight Tag",
+          "result": "fail",
+          "score_impact": "0 (não penaliza, mas impede +1)",
+          "detail": "Nenhum script de snap.licdn.com detectado. Se houver investimento em LinkedIn Ads, as conversões não estão sendo rastreadas.",
+          "source": "Nenhum request para licdn.com encontrado nos 187 requests interceptados",
+          "url_captured": null
+        },
+        {
+          "check": "Tags duplicadas",
+          "result": "pass",
+          "score_impact": "+1",
+          "detail": "Nenhuma duplicação detectada. Apenas 1 container GTM e 1 medição GA4 presentes.",
+          "source": "Contagem de IDs únicos nos requests de rede",
+          "url_captured": null
+        }
+      ],
+      "scoring_breakdown": "Base: 0 | +1 GTM ok | +1 GA4 ok | +1 Meta Pixel ok | +1 sem duplicatas | +0 Meta AM ausente | +0 LinkedIn ausente = 4/5"
+    },
+    "attribution_health": {
+      "score": 2,
+      "max_score": 5,
+      "comment": "Alerta Crítico: O site realiza redirecionamentos que limpam as UTMs da URL e falha na gravação dos cookies de atribuição do Google Ads. Isso significa que suas campanhas estão perdendo dados de conversão — o investimento em mídia não está sendo rastreado corretamente.",
+      "data": {
+        "utm_persistence_on_redirect": false,
+        "redirect_strips_params": true,
+        "redirect_type": "301",
+        "google_click_id_cookie_dropped": false,
+        "meta_click_id_cookie_dropped": true,
+        "localstorage_utm_saved": false,
+        "cookies_found": ["_fbc"],
+        "cookies_missing": ["_gcl_aw"]
+      },
+      "evidence": [
+        {
+          "check": "Persistência de UTMs no redirect",
+          "result": "fail",
+          "score_impact": "-2 (crítico)",
+          "detail": "Ao acessar exemplo.com.br/?utm_source=google&utm_medium=cpc&utm_campaign=brand, o site redireciona (301) para exemplo.com.br/ sem parâmetros. As UTMs são perdidas antes de o GA4 capturá-las.",
+          "source": "Simulação de acesso com UTMs + interceptação do redirect 301",
+          "test_input": "https://exemplo.com.br/?utm_source=google&utm_medium=cpc&utm_campaign=brand&gclid=test123",
+          "test_output": "https://exemplo.com.br/  (UTMs e gclid removidos pelo redirect)"
+        },
+        {
+          "check": "Cookie _gcl_aw (Google Ads)",
+          "result": "fail",
+          "score_impact": "-1 (alto)",
+          "detail": "Após o redirect, o cookie _gcl_aw não é criado. Este cookie é essencial para que o Google Ads atribua conversões às campanhas. Sem ele, as conversões aparecem como 'tráfego direto' no GA4.",
+          "source": "Inspeção de document.cookie após simulação de clique com gclid",
+          "cookies_snapshot": {
+            "expected": "_gcl_aw=GCL.1710000000.test123",
+            "found": "não encontrado"
+          }
+        },
+        {
+          "check": "Cookie _fbc (Meta)",
+          "result": "pass",
+          "score_impact": "+1",
+          "detail": "Cookie _fbc presente e com formato válido. O Meta consegue atribuir conversões vindas de anúncios do Facebook/Instagram.",
+          "source": "Inspeção de document.cookie",
+          "cookies_snapshot": {
+            "expected": "_fbc=fb.1.1710000000.fbclid_abc",
+            "found": "_fbc=fb.1.1710000000.fbclid_abc"
+          }
+        },
+        {
+          "check": "Backup de UTMs em localStorage",
+          "result": "fail",
+          "score_impact": "0 (oportunidade perdida)",
+          "detail": "O site não salva UTMs em localStorage como fallback para redirects. Implementar um script que capture UTMs antes do redirect resolveria o problema sem alterar o servidor.",
+          "source": "Inspeção de localStorage — nenhuma chave utm_* encontrada",
+          "test_input": "localStorage.getItem('utm_source')",
+          "test_output": "null"
+        },
+        {
+          "check": "Tipo de redirect",
+          "result": "info",
+          "score_impact": "contextual",
+          "detail": "O redirect é um 301 (permanente). Navegadores cachearão o redirect sem parâmetros, agravando o problema. Um 302 seria menos danoso pois não cacheia.",
+          "source": "HTTP response headers do redirect",
+          "url_captured": "HTTP/1.1 301 Moved Permanently → Location: https://exemplo.com.br/"
+        }
+      ],
+      "scoring_breakdown": "Base: 5 | -2 UTMs perdidos no redirect | -1 cookie _gcl_aw ausente | +0 localStorage sem fallback = 2/5"
+    },
+    "server_side_tracking": {
+      "score": 0,
+      "max_score": 5,
+      "comment": "Nenhum proxy ou endpoint de Server-Side Tracking foi detectado. O domínio depende 100% de Client-Side, ficando vulnerável a bloqueadores de anúncios (AdBlockers) e às restrições do Safari (ITP), que apagam cookies de rastreamento em 7 dias.",
+      "data": {
+        "sst_detected": false,
+        "sgtm_subdomain": null,
+        "sgtm_endpoints": [],
+        "meta_capi_proxy": false,
+        "httponly_tracking_cookies": false,
+        "itp_bypass_functional": false
+      },
+      "evidence": [
+        {
+          "check": "Subdomínio sGTM",
+          "result": "fail",
+          "score_impact": "+0",
+          "detail": "Nenhum subdomínio de first-party proxy encontrado (ex: sgtm.exemplo.com.br, data.exemplo.com.br). Todos os requests de tracking vão diretamente para domínios de terceiros (google-analytics.com, facebook.net).",
+          "source": "DNS lookup de subdomínios comuns + análise de domínios nos 187 requests interceptados",
+          "subdomains_tested": ["sgtm.exemplo.com.br", "data.exemplo.com.br", "tag.exemplo.com.br", "collect.exemplo.com.br"],
+          "subdomains_resolved": "nenhum"
+        },
+        {
+          "check": "Meta Conversions API (CAPI)",
+          "result": "fail",
+          "score_impact": "+0",
+          "detail": "Nenhum endpoint de proxy first-party para CAPI detectado. Eventos server-side do Meta não estão sendo enviados. A qualidade do sinal de conversão é penalizada pelo algoritmo do Meta.",
+          "source": "Ausência de requests para endpoint /api/meta ou proxy equivalente",
+          "url_captured": null
+        },
+        {
+          "check": "Cookies HttpOnly de tracking",
+          "result": "fail",
+          "score_impact": "+0",
+          "detail": "Nenhum cookie de tracking com flag HttpOnly encontrado. Cookies HttpOnly (setados pelo servidor) não são afetados pelo ITP do Safari — sem eles, o Safari apaga cookies de tracking em 7 dias.",
+          "source": "Análise de Set-Cookie headers nas respostas HTTP",
+          "cookies_analyzed": [
+            {"name": "_ga", "httponly": false, "samesite": "Lax", "expires": "2 anos", "vulnerability": "ITP limita a 7 dias no Safari"},
+            {"name": "_fbc", "httponly": false, "samesite": "Lax", "expires": "90 dias", "vulnerability": "ITP limita a 7 dias no Safari"}
+          ]
+        },
+        {
+          "check": "Bypass funcional de ITP",
+          "result": "fail",
+          "score_impact": "+0",
+          "detail": "Sem sGTM ou cookies HttpOnly, não há mecanismo para contornar o ITP. Em Safari (~18% do tráfego BR), cookies de tracking expiram em 7 dias, fragmentando jornadas de conversão longas.",
+          "source": "Combinação: sem sGTM + sem HttpOnly = sem bypass ITP",
+          "estimated_data_loss": "15-30% das conversões em Safari (jornadas > 7 dias)"
+        }
+      ],
+      "scoring_breakdown": "Base: 0 | +0 sem sGTM | +0 sem CAPI | +0 sem HttpOnly | +0 sem bypass ITP = 0/5"
+    },
+    "datalayer_depth": {
+      "score": 5,
+      "max_score": 5,
+      "comment": "Excelente configuração do DataLayer. O rastreamento de interação está ativo com eventos de funil completos (view_item, add_to_cart) e cumprimento estrito do Schema GA4 de E-commerce, garantindo máxima performance para campanhas de Catálogo Dinâmico do Google e Meta.",
+      "data": {
+        "datalayer_exists": true,
+        "datalayer_events_count": 8,
+        "standard_events_detected": ["view_item_list", "view_item", "add_to_cart", "view_cart"],
+        "interaction_tracking_active": true,
+        "ga4_schema_compliant": true,
+        "ecommerce_items_array": true,
+        "required_fields_present": ["item_id", "item_name", "price", "quantity"],
+        "missing_recommended_fields": ["item_brand", "item_category2"]
+      },
+      "evidence": [
+        {
+          "check": "DataLayer presente",
+          "result": "pass",
+          "score_impact": "+1",
+          "detail": "window.dataLayer existe e está populado com 8 eventos ao navegar pela homepage e uma página de produto.",
+          "source": "Execução de window.dataLayer.length no console do navegador",
+          "test_output": "window.dataLayer.length = 8"
+        },
+        {
+          "check": "Eventos de funil e-commerce",
+          "result": "pass",
+          "score_impact": "+1",
+          "detail": "4 dos 8 eventos padrão do funil GA4 e-commerce foram detectados: view_item_list (listagem), view_item (produto), add_to_cart (carrinho), view_cart (revisão). Cobrem a jornada de descoberta até intenção de compra.",
+          "source": "Filtragem de window.dataLayer por event name",
+          "events_found": [
+            {"event": "view_item_list", "page": "/produtos", "items_count": 12},
+            {"event": "view_item", "page": "/produto/camiseta-azul", "items_count": 1},
+            {"event": "add_to_cart", "page": "/produto/camiseta-azul", "items_count": 1},
+            {"event": "view_cart", "page": "/carrinho", "items_count": 2}
+          ]
+        },
+        {
+          "check": "Schema GA4 — campos obrigatórios",
+          "result": "pass",
+          "score_impact": "+1",
+          "detail": "Todos os 4 campos obrigatórios do array items[] estão presentes: item_id, item_name, price, quantity. Isso garante que relatórios de e-commerce no GA4 e campanhas de catálogo dinâmico funcionem corretamente.",
+          "source": "Validação do primeiro item do evento view_item",
+          "sample_item": {
+            "item_id": "SKU-001",
+            "item_name": "Camiseta Azul Básica",
+            "price": 79.90,
+            "quantity": 1,
+            "item_category": "Vestuário",
+            "item_variant": "M",
+            "discount": 0
+          }
+        },
+        {
+          "check": "Schema GA4 — campos recomendados",
+          "result": "partial",
+          "score_impact": "+1 (presença > 60%)",
+          "detail": "5 de 7 campos recomendados estão presentes (71%). Apenas item_brand e item_category2 estão ausentes. A presença de item_category, item_variant, discount, coupon e index garante boa granularidade nos relatórios.",
+          "source": "Comparação do objeto items[] com schema GA4 de referência",
+          "fields_present": ["item_category", "item_variant", "discount", "coupon", "index"],
+          "fields_missing": ["item_brand", "item_category2"]
+        },
+        {
+          "check": "Integridade do array ecommerce.items[]",
+          "result": "pass",
+          "score_impact": "+1",
+          "detail": "O array items[] segue a estrutura correta em todos os eventos: é sempre um Array (não objeto), cada item tem types consistentes (price é number, quantity é integer), e não há campos nulos ou undefined.",
+          "source": "Validação de tipos via typeof em cada campo de items[0]",
+          "type_check": {
+            "item_id": "string ✓",
+            "item_name": "string ✓",
+            "price": "number ✓",
+            "quantity": "number ✓",
+            "discount": "number ✓"
+          }
+        }
+      ],
+      "scoring_breakdown": "Base: 0 | +1 dataLayer existe | +1 eventos de funil | +1 campos obrigatórios | +1 campos recomendados >60% | +1 integridade items[] = 5/5"
+    }
+  },
+  "overall_maturity": {
+    "score": 2.75,
+    "max_score": 5.0,
+    "rating": "Intermediário",
+    "general_comment": "A operação possui a base de eventos muito bem configurada, mas sofre com quebras severas de atribuição de URLs e carece de modernização da infraestrutura (Server-Side) para não perder conversões."
+  },
+  "top_issues": [
+    {
+      "rank": 1,
+      "severity": "critical",
+      "module": "attribution_health",
+      "title": "Atribuição de campanhas quebrada",
+      "description": "Redirecionamentos do site estão limpando os parâmetros UTM e o cookie _gcl_aw do Google Ads não está sendo gerado. Campanhas do Google não conseguem rastrear conversões.",
+      "business_impact": "Investimento em Google Ads sem rastreamento de retorno",
+      "recommendation": "Corrigir redirecionamentos para preservar query strings e garantir que o snippet do Google Ads gere o cookie _gcl_aw."
+    },
+    {
+      "rank": 2,
+      "severity": "critical",
+      "module": "server_side_tracking",
+      "title": "Sem infraestrutura Server-Side",
+      "description": "O site depende 100% de tracking client-side, vulnerável a AdBlockers e ITP do Safari. Dados de conversão estão sendo perdidos silenciosamente.",
+      "business_impact": "Perda estimada de 15-30% dos dados de conversão por bloqueio",
+      "recommendation": "Implementar Google Tag Manager Server-Side (sGTM) em subdomínio próprio para contornar bloqueadores e ITP."
+    },
+    {
+      "rank": 3,
+      "severity": "warning",
+      "module": "tracking_infrastructure",
+      "title": "Meta Pixel sem Advanced Matching",
+      "description": "O Pixel do Meta está ativo mas não utiliza Advanced Matching, reduzindo a taxa de match entre visitantes e perfis do Facebook/Instagram.",
+      "business_impact": "Públicos de remarketing menores e menos precisos",
+      "recommendation": "Ativar Advanced Matching no Meta Pixel para enviar dados hashados (email, telefone) e melhorar a taxa de match."
+    }
+  ],
+  "recommendations_summary": {
+    "quick_wins": [
+      "Ativar Meta Advanced Matching (configuração no painel do Meta, sem código)",
+      "Instalar LinkedIn Insight Tag se investir em LinkedIn Ads"
+    ],
+    "medium_effort": [
+      "Corrigir redirecionamentos para preservar UTMs e click IDs",
+      "Garantir geração do cookie _gcl_aw do Google Ads"
+    ],
+    "high_effort": [
+      "Implementar sGTM em subdomínio próprio para Server-Side Tracking",
+      "Configurar Meta CAPI via proxy first-party para bypass de ITP"
+    ]
+  }
+}

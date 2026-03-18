@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blind Analytics — Dashboard Prototype</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+<style>
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .tab-active { border-bottom: 2px solid #4f46e5 !important; color: #4f46e5 !important; }
+  .tab-inactive { border-bottom: 2px solid transparent !important; color: #6b7280 !important; }
+  .tab-inactive:hover { color: #374151 !important; }
+  .fade-in { animation: fadeIn 0.3s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .evidence-row:hover { background: #f0f4ff !important; }
+  code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 11px; color: #6366f1; font-family: 'SF Mono', 'Fira Code', monospace; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+const { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } = Recharts;
+
+/* ─── Dados simulados com evidências ─── */
+const diagnostic = {
+  domain: "exemplo.com.br",
+  audit_timestamp: "2026-03-17T10:30:00Z",
+  modules: {
+    tracking_infrastructure: {
+      score: 4, max_score: 5,
+      label: "Infraestrutura de Tags", icon: "activity",
+      comment: "As tags base (GTM e GA4) estão instaladas e operacionais. O Pixel do Meta está presente, mas não utiliza Advanced Matching.",
+      scoring_breakdown: "Base: 0 | +1 GTM ok | +1 GA4 ok | +1 Meta Pixel ok | +1 sem duplicatas | +0 Advanced Matching ausente | +0 LinkedIn ausente = 4/5",
+      evidence: [
+        { check: "Google Tag Manager (GTM)", result: "pass", score_impact: "+1", detail: "Container GTM-ABC123 carregado corretamente via googletagmanager.com/gtm.js", source: "Network request interceptado ao carregar a homepage", url_captured: "https://www.googletagmanager.com/gtm.js?id=GTM-ABC123" },
+        { check: "Google Analytics 4 (GA4)", result: "pass", score_impact: "+1", detail: "Medição G-XYZ789 ativa. Eventos page_view disparando corretamente no carregamento.", source: "Request de coleta GA4 interceptado", url_captured: "https://www.google-analytics.com/g/collect?v=2&tid=G-XYZ789&_p=98234" },
+        { check: "Meta Pixel (base)", result: "pass", score_impact: "+1", detail: "Pixel ID 123456789 inicializado. Evento PageView disparado no carregamento.", source: "Script fbevents.js carregado + fbq('init') detectado no DOM", url_captured: "https://connect.facebook.net/en_US/fbevents.js" },
+        { check: "Meta Advanced Matching", result: "fail", score_impact: "+0", detail: "O fbq('init') não contém o segundo parâmetro com dados do usuário (email, phone). Sem Advanced Matching, a taxa de match com perfis cai ~30%.", source: "Inspeção do código: fbq('init', '123456789') — sem objeto de user data", url_captured: null },
+        { check: "LinkedIn Insight Tag", result: "fail", score_impact: "+0", detail: "Nenhum script de snap.licdn.com detectado. Se houver investimento em LinkedIn Ads, as conversões não estão sendo rastreadas.", source: "Nenhum request para licdn.com nos 187 requests interceptados", url_captured: null },
+        { check: "Tags duplicadas", result: "pass", score_impact: "+1", detail: "Nenhuma duplicação detectada. Apenas 1 container GTM e 1 medição GA4 presentes.", source: "Contagem de IDs únicos nos requests de rede", url_captured: null }
+      ]
+    },
+    attribution_health: {
+      score: 2, max_score: 5,
+      label: "Saúde da Atribuição", icon: "shield",
+      comment: "Alerta Crítico: Redirecionamentos limpam UTMs e o cookie _gcl_aw do Google Ads não é gerado. Campanhas perdendo dados de conversão.",
+      scoring_breakdown: "Base: 5 | -2 UTMs perdidos no redirect | -1 cookie _gcl_aw ausente | +0 localStorage sem fallback = 2/5",
+      evidence: [
+        { check: "Persistência de UTMs no redirect", result: "fail", score_impact: "-2", detail: "Ao acessar exemplo.com.br/?utm_source=google&utm_medium=cpc, o site redireciona (301) para exemplo.com.br/ sem parâmetros. As UTMs são perdidas antes de o GA4 capturá-las.", source: "Simulação de acesso com UTMs + interceptação do redirect 301", url_captured: "301 → https://exemplo.com.br/  (UTMs removidas)" },
+        { check: "Cookie _gcl_aw (Google Ads)", result: "fail", score_impact: "-1", detail: "Após o redirect, o cookie _gcl_aw não é criado. Este cookie é essencial para que o Google Ads atribua conversões às campanhas. Sem ele, conversões aparecem como 'tráfego direto'.", source: "Inspeção de document.cookie após simulação de clique com gclid", url_captured: "Esperado: _gcl_aw=GCL.xxx → Encontrado: não existe" },
+        { check: "Cookie _fbc (Meta)", result: "pass", score_impact: "+0", detail: "Cookie _fbc presente e com formato válido. O Meta consegue atribuir conversões vindas de anúncios do Facebook/Instagram.", source: "Inspeção de document.cookie", url_captured: "_fbc=fb.1.1710000000.fbclid_abc ✓" },
+        { check: "Backup de UTMs em localStorage", result: "fail", score_impact: "+0", detail: "O site não salva UTMs em localStorage como fallback. Um script que capture UTMs antes do redirect resolveria o problema sem alterar o servidor.", source: "localStorage.getItem('utm_source') → null", url_captured: null },
+        { check: "Tipo de redirect", result: "info", score_impact: "info", detail: "O redirect é 301 (permanente). Navegadores cachearão o redirect sem parâmetros, agravando o problema. Um 302 seria menos danoso.", source: "HTTP response headers", url_captured: "HTTP/1.1 301 Moved Permanently → Location: https://exemplo.com.br/" }
+      ]
+    },
+    server_side_tracking: {
+      score: 0, max_score: 5,
+      label: "Server-Side Tracking", icon: "server",
+      comment: "Nenhum proxy ou endpoint SST detectado. 100% client-side — vulnerável a AdBlockers e ITP do Safari.",
+      scoring_breakdown: "Base: 0 | +0 sem sGTM | +0 sem CAPI | +0 sem HttpOnly | +0 sem bypass ITP = 0/5",
+      evidence: [
+        { check: "Subdomínio sGTM", result: "fail", score_impact: "+0", detail: "Nenhum subdomínio first-party proxy encontrado. Todos os requests de tracking vão para domínios de terceiros (google-analytics.com, facebook.net).", source: "DNS lookup de subdomínios comuns", url_captured: "Testados: sgtm.exemplo.com.br, data.exemplo.com.br, tag.exemplo.com.br → nenhum resolveu" },
+        { check: "Meta Conversions API (CAPI)", result: "fail", score_impact: "+0", detail: "Nenhum endpoint de proxy first-party para CAPI detectado. Eventos server-side do Meta não estão sendo enviados.", source: "Ausência de requests para endpoint /api/meta ou proxy equivalente", url_captured: null },
+        { check: "Cookies HttpOnly de tracking", result: "fail", score_impact: "+0", detail: "Nenhum cookie de tracking com flag HttpOnly. Sem eles, o Safari ITP apaga cookies de tracking em 7 dias, fragmentando jornadas longas.", source: "Set-Cookie headers: _ga (HttpOnly: false), _fbc (HttpOnly: false)", url_captured: null },
+        { check: "Bypass funcional de ITP", result: "fail", score_impact: "+0", detail: "Sem sGTM ou cookies HttpOnly, não há mecanismo para contornar ITP. Em Safari (~18% do tráfego BR), cookies expiram em 7 dias.", source: "Combinação: sem sGTM + sem HttpOnly = sem bypass", url_captured: "Perda estimada: 15-30% das conversões em Safari" }
+      ]
+    },
+    datalayer_depth: {
+      score: 5, max_score: 5,
+      label: "Profundidade do DataLayer", icon: "layers",
+      comment: "Excelente configuração. Eventos de funil completos com schema GA4 de e-commerce, ideal para catálogo dinâmico.",
+      scoring_breakdown: "Base: 0 | +1 dataLayer existe | +1 eventos de funil | +1 campos obrigatórios | +1 campos recomendados >60% | +1 integridade items[] = 5/5",
+      evidence: [
+        { check: "DataLayer presente", result: "pass", score_impact: "+1", detail: "window.dataLayer existe e está populado com 8 eventos ao navegar pela homepage e uma página de produto.", source: "window.dataLayer.length = 8", url_captured: null },
+        { check: "Eventos de funil e-commerce", result: "pass", score_impact: "+1", detail: "4 dos 8 eventos padrão do funil GA4 detectados: view_item_list, view_item, add_to_cart, view_cart. Cobrem de descoberta até intenção de compra.", source: "Filtragem de window.dataLayer por event name", url_captured: "view_item_list (/produtos) · view_item (/produto/camiseta-azul) · add_to_cart · view_cart" },
+        { check: "Schema GA4 — campos obrigatórios", result: "pass", score_impact: "+1", detail: "Todos os 4 campos obrigatórios do array items[] presentes: item_id, item_name, price, quantity.", source: "Validação do evento view_item → items[0]", url_captured: '{ item_id: "SKU-001", item_name: "Camiseta Azul", price: 79.90, quantity: 1 }' },
+        { check: "Schema GA4 — campos recomendados", result: "partial", score_impact: "+1", detail: "5 de 7 campos recomendados presentes (71%). Apenas item_brand e item_category2 ausentes. Boa granularidade nos relatórios.", source: "Presentes: item_category, item_variant, discount, coupon, index", url_captured: "Ausentes: item_brand, item_category2" },
+        { check: "Integridade items[]", result: "pass", score_impact: "+1", detail: "Array items[] segue estrutura correta: é Array (não objeto), types consistentes, sem campos nulos ou undefined.", source: "typeof check: item_id=string, price=number, quantity=number", url_captured: null }
+      ]
+    }
+  },
+  overall_maturity: { score: 2.75, max_score: 5.0, rating: "Intermediário" },
+  top_issues: [
+    { rank: 1, severity: "critical", module: "attribution_health", title: "Atribuição de campanhas quebrada", description: "Redirecionamentos limpam UTMs e o cookie _gcl_aw não é gerado.", business_impact: "Investimento em Google Ads sem rastreamento de retorno", recommendation: "Corrigir redirecionamentos para preservar query strings e garantir geração do cookie _gcl_aw." },
+    { rank: 2, severity: "critical", module: "server_side_tracking", title: "Sem infraestrutura Server-Side", description: "100% client-side, vulnerável a AdBlockers e ITP. Dados de conversão perdidos silenciosamente.", business_impact: "Perda estimada de 15-30% dos dados de conversão", recommendation: "Implementar sGTM em subdomínio próprio para contornar bloqueadores e ITP." },
+    { rank: 3, severity: "warning", module: "tracking_infrastructure", title: "Meta Pixel sem Advanced Matching", description: "Pixel ativo mas sem Advanced Matching — taxa de match reduzida.", business_impact: "Públicos de remarketing menores e menos precisos", recommendation: "Ativar Advanced Matching no painel do Meta para enviar dados hashados." }
+  ],
+  recommendations_summary: {
+    quick_wins: ["Ativar Meta Advanced Matching (configuração no painel, sem código)", "Instalar LinkedIn Insight Tag se investir em LinkedIn Ads"],
+    medium_effort: ["Corrigir redirecionamentos para preservar UTMs e click IDs", "Garantir geração do cookie _gcl_aw do Google Ads"],
+    high_effort: ["Implementar sGTM em subdomínio próprio para Server-Side Tracking", "Configurar Meta CAPI via proxy first-party para bypass de ITP"]
+  }
+};
+
+/* ─── SVG Icons ─── */
+const icons = {
+  activity: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+  shield: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+  server: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>,
+  layers: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
+  check: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+  x: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>,
+  alert: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+  link: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>,
+  down: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>,
+  up: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>,
+  info: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>,
+};
+
+function Icon({ name, size = 16, color, style: s = {} }) {
+  const Ic = icons[name];
+  if (!Ic) return null;
+  return <Ic width={size} height={size} style={{ color, minWidth: size, flexShrink: 0, ...s }} />;
+}
+
+/* ─── Helpers ─── */
+function getScoreColor(score, max = 5) {
+  const pct = score / max;
+  if (pct >= 0.8) return "#22c55e";
+  if (pct >= 0.6) return "#eab308";
+  if (pct >= 0.4) return "#f97316";
+  return "#ef4444";
+}
+
+function getRatingStyle(rating) {
+  const map = {
+    "Crítico": { bg: "#fee2e2", text: "#991b1b" },
+    "Básico": { bg: "#ffedd5", text: "#9a3412" },
+    "Intermediário": { bg: "#fef9c3", text: "#854d0e" },
+    "Avançado": { bg: "#dcfce7", text: "#166534" },
+    "Excelente": { bg: "#d1fae5", text: "#065f46" },
+  };
+  return map[rating] || map["Intermediário"];
+}
+
+function resultIcon(result) {
+  if (result === "pass") return { name: "check", color: "#22c55e" };
+  if (result === "fail") return { name: "x", color: "#ef4444" };
+  if (result === "partial") return { name: "alert", color: "#eab308" };
+  return { name: "info", color: "#6366f1" };
+}
+
+function resultBg(result) {
+  if (result === "pass") return "#f0fdf4";
+  if (result === "fail") return "#fef2f2";
+  if (result === "partial") return "#fffbeb";
+  return "#eff6ff";
+}
+
+function resultLabel(result) {
+  if (result === "pass") return "Aprovado";
+  if (result === "fail") return "Falhou";
+  if (result === "partial") return "Parcial";
+  return "Info";
+}
+
+/* ─── Score Ring ─── */
+function ScoreRing({ score, max = 5, size = 130 }) {
+  const pct = score / max;
+  const r = (size - 14) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ * (1 - pct);
+  const color = getScoreColor(score, max);
+  return (
+    <svg width={size} height={size} style={{ display: "block", margin: "0 auto" }}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e5e7eb" strokeWidth="10" />
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth="10"
+        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+        transform={`rotate(-90 ${size/2} ${size/2})`}
+        style={{ transition: "stroke-dashoffset 0.8s ease" }} />
+      <text x={size/2} y={size/2 - 4} textAnchor="middle" style={{ fontSize: 28, fontWeight: 700 }} fill={color}>
+        {score % 1 ? score.toFixed(2) : score}
+      </text>
+      <text x={size/2} y={size/2 + 16} textAnchor="middle" style={{ fontSize: 12 }} fill="#9ca3af">de {max}</text>
+    </svg>
+  );
+}
+
+/* ─── Evidence Table Row ─── */
+function EvidenceRow({ ev }) {
+  const [expanded, setExpanded] = useState(false);
+  const ri = resultIcon(ev.result);
+  return (
+    <div className="evidence-row" style={{ borderBottom: "1px solid #f3f4f6" }}>
+      <div onClick={() => setExpanded(!expanded)}
+        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", cursor: "pointer" }}>
+        <Icon name={ri.name} size={16} color={ri.color} />
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 500, color: "#111827" }}>{ev.check}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 999, background: resultBg(ev.result), color: ri.color }}>
+          {resultLabel(ev.result)}
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: ev.score_impact.startsWith("-") ? "#ef4444" : ev.score_impact.startsWith("+0") ? "#9ca3af" : "#22c55e", minWidth: 28, textAlign: "right" }}>
+          {ev.score_impact}
+        </span>
+        <Icon name={expanded ? "up" : "down"} size={12} color="#9ca3af" />
+      </div>
+      {expanded && (
+        <div className="fade-in" style={{ padding: "0 12px 12px 38px" }}>
+          <p style={{ fontSize: 12, color: "#4b5563", lineHeight: 1.7, margin: "0 0 8px" }}>{ev.detail}</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontSize: 11, color: "#6b7280" }}>
+              <span style={{ fontWeight: 600 }}>Fonte: </span>{ev.source}
+            </div>
+            {ev.url_captured && (
+              <div style={{ fontSize: 11, padding: "6px 10px", background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0", fontFamily: "'SF Mono', 'Fira Code', monospace", color: "#475569", wordBreak: "break-all" }}>
+                {ev.url_captured}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Module Card with Evidence ─── */
+function ModuleCard({ mod }) {
+  const [showEvidence, setShowEvidence] = useState(false);
+  const color = getScoreColor(mod.score);
+  const pct = (mod.score / mod.max_score) * 100;
+  const passCount = mod.evidence.filter(e => e.result === "pass").length;
+  const failCount = mod.evidence.filter(e => e.result === "fail").length;
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflow: "hidden", transition: "box-shadow 0.2s" }}
+      onMouseEnter={e => e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"}
+      onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}>
+
+      {/* Header */}
+      <div style={{ padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+          <div style={{ padding: 8, borderRadius: 8, backgroundColor: color + "18" }}>
+            <Icon name={mod.icon} size={20} color={color} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>{mod.label}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+              <div style={{ height: 6, width: 96, background: "#f3f4f6", borderRadius: 999, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 999, transition: "width 0.7s ease" }} />
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 700, color }}>{mod.score}/{mod.max_score}</span>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <span style={{ fontSize: 11, color: "#22c55e", fontWeight: 600 }}>{passCount} ok</span>
+            {failCount > 0 && <span style={{ fontSize: 11, color: "#ef4444", fontWeight: 600 }}>{failCount} falha{failCount > 1 ? "s" : ""}</span>}
+          </div>
+        </div>
+        <p style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.6, margin: 0 }}>{mod.comment}</p>
+
+        {/* Scoring breakdown */}
+        <div style={{ marginTop: 10, padding: "6px 10px", background: "#f8fafc", borderRadius: 6, fontSize: 11, color: "#64748b", fontFamily: "'SF Mono', 'Fira Code', monospace" }}>
+          {mod.scoring_breakdown}
+        </div>
+      </div>
+
+      {/* Evidence toggle */}
+      <button onClick={() => setShowEvidence(!showEvidence)}
+        style={{ width: "100%", padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 12, fontWeight: 500, color: "#6366f1", background: showEvidence ? "#eef2ff" : "#f9fafb", border: "none", borderTop: "1px solid #e5e7eb", cursor: "pointer", transition: "background 0.15s" }}>
+        <Icon name={showEvidence ? "up" : "down"} size={13} color="#6366f1" />
+        {showEvidence ? "Ocultar evidências" : `Ver ${mod.evidence.length} evidências detalhadas`}
+      </button>
+
+      {/* Evidence list */}
+      {showEvidence && (
+        <div className="fade-in" style={{ borderTop: "1px solid #e5e7eb" }}>
+          {mod.evidence.map((ev, i) => (
+            <EvidenceRow key={i} ev={ev} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Issue Card ─── */
+function IssueCard({ issue }) {
+  const isCritical = issue.severity === "critical";
+  const bg = isCritical ? "#fef2f2" : "#fffbeb";
+  const border = isCritical ? "#fecaca" : "#fde68a";
+  const textColor = isCritical ? "#b91c1c" : "#b45309";
+  const iconName = isCritical ? "x" : "alert";
+  return (
+    <div style={{ borderRadius: 12, border: `1px solid ${border}`, background: bg, padding: 16 }}>
+      <div style={{ display: "flex", gap: 12 }}>
+        <Icon name={iconName} size={18} color={textColor} />
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: textColor }}>{isCritical ? "Crítico" : "Atenção"}</span>
+            <span style={{ fontSize: 11, color: "#9ca3af" }}>#{issue.rank}</span>
+          </div>
+          <div style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>{issue.title}</div>
+          <p style={{ fontSize: 12, color: "#4b5563", margin: "4px 0 0" }}>{issue.description}</p>
+          <div style={{ marginTop: 8, padding: 10, background: "rgba(255,255,255,0.6)", borderRadius: 8 }}>
+            <p style={{ fontSize: 12, margin: 0 }}>
+              <span style={{ fontWeight: 600, color: "#374151" }}>Impacto: </span>
+              <span style={{ color: "#4b5563" }}>{issue.business_impact}</span>
+            </p>
+            <p style={{ fontSize: 12, margin: "4px 0 0" }}>
+              <span style={{ fontWeight: 600, color: "#374151" }}>Ação: </span>
+              <span style={{ color: "#4b5563" }}>{issue.recommendation}</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Rec Section ─── */
+function RecSection({ title, items, color }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <h4 style={{ fontSize: 14, fontWeight: 600, color: "#374151", marginBottom: 10 }}>{title}</h4>
+      {items.map((item, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "#4b5563", marginBottom: 8 }}>
+          <span style={{ marginTop: 5, width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
+          {item}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─── Chart Data ─── */
+const radarData = Object.values(diagnostic.modules).map(m => ({
+  module: m.label.split(" ").slice(0, 2).join(" "),
+  score: m.score, fullMark: m.max_score
+}));
+
+const barData = Object.values(diagnostic.modules).map(m => ({
+  name: m.label.split(" ")[0],
+  score: m.score, max: m.max_score
+}));
+
+/* ─── Main Dashboard ─── */
+function App() {
+  const [tab, setTab] = useState("overview");
+  const { overall_maturity: maturity } = diagnostic;
+  const rStyle = getRatingStyle(maturity.rating);
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#f9fafb" }}>
+      {/* Header */}
+      <header style={{ background: "#fff", borderBottom: "1px solid #e5e7eb", padding: "16px 24px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 32, height: 32, background: "#4f46e5", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon name="activity" size={16} color="#fff" />
+              </div>
+              <span style={{ fontSize: 18, fontWeight: 700, color: "#111827" }}>Blind Analytics</span>
+            </div>
+            <p style={{ fontSize: 13, color: "#6b7280", margin: "4px 0 0 44px" }}>Diagnóstico de Maturidade de Mensuração</p>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, color: "#4b5563" }}>
+              <Icon name="link" size={14} color="#6b7280" />
+              <span style={{ fontWeight: 600 }}>{diagnostic.domain}</span>
+            </div>
+            <p style={{ fontSize: 11, color: "#9ca3af", margin: "2px 0 0" }}>{new Date(diagnostic.audit_timestamp).toLocaleString("pt-BR")}</p>
+          </div>
+        </div>
+      </header>
+
+      {/* Tabs */}
+      <div style={{ background: "#fff", borderBottom: "1px solid #e5e7eb" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px", display: "flex", gap: 24 }}>
+          {[{ id: "overview", label: "Visão Geral" }, { id: "issues", label: "Problemas" }, { id: "actions", label: "Plano de Ação" }].map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              className={tab === t.id ? "tab-active" : "tab-inactive"}
+              style={{ padding: "12px 0", fontSize: 14, fontWeight: 500, background: "none", border: "none", cursor: "pointer" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "24px" }}>
+        {tab === "overview" && (
+          <div className="fade-in">
+            {/* Hero */}
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: 24, marginBottom: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
+                <ScoreRing score={maturity.score} max={maturity.max_score} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                    <span style={{ fontSize: 20, fontWeight: 700, color: "#111827" }}>Maturidade Geral</span>
+                    <span style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600, background: rStyle.bg, color: rStyle.text }}>{maturity.rating}</span>
+                  </div>
+                  <p style={{ fontSize: 14, color: "#4b5563", lineHeight: 1.6, margin: 0 }}>
+                    A operação possui a base de eventos bem configurada, mas sofre com quebras severas de atribuição e carece de modernização da infraestrutura Server-Side.
+                  </p>
+                  <div style={{ display: "flex", gap: 24, marginTop: 16 }}>
+                    <div style={{ textAlign: "center" }}><div style={{ fontSize: 24, fontWeight: 700, color: "#ef4444" }}>2</div><div style={{ fontSize: 11, color: "#6b7280" }}>Críticos</div></div>
+                    <div style={{ textAlign: "center" }}><div style={{ fontSize: 24, fontWeight: 700, color: "#f59e0b" }}>1</div><div style={{ fontSize: 11, color: "#6b7280" }}>Atenção</div></div>
+                    <div style={{ textAlign: "center" }}><div style={{ fontSize: 24, fontWeight: 700, color: "#22c55e" }}>1</div><div style={{ fontSize: 11, color: "#6b7280" }}>Excelente</div></div>
+                  </div>
+                </div>
+                <div style={{ width: 260, height: 200 }}>
+                  <ResponsiveContainer>
+                    <RadarChart data={radarData}>
+                      <PolarGrid stroke="#e5e7eb" />
+                      <PolarAngleAxis dataKey="module" tick={{ fontSize: 10, fill: "#6b7280" }} />
+                      <PolarRadiusAxis angle={90} domain={[0, 5]} tick={{ fontSize: 9 }} />
+                      <Radar dataKey="score" stroke="#6366f1" fill="#6366f1" fillOpacity={0.2} strokeWidth={2} />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Module Cards */}
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: "#111827", marginBottom: 12 }}>Módulos Avaliados</h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 24 }}>
+              {Object.values(diagnostic.modules).map((mod, i) => (
+                <ModuleCard key={i} mod={mod} />
+              ))}
+            </div>
+
+            {/* Bar Chart */}
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: 20 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, color: "#111827", marginBottom: 16 }}>Comparativo por Módulo</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={barData} barCategoryGap="30%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis domain={[0, 5]} tick={{ fontSize: 11 }} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} formatter={v => [`${v}/5`, "Score"]} />
+                  <Bar dataKey="score" radius={[6, 6, 0, 0]}>
+                    {barData.map((entry, i) => <Cell key={i} fill={getScoreColor(entry.score)} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {tab === "issues" && (
+          <div className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: "#111827" }}>Problemas Encontrados ({diagnostic.top_issues.length})</h2>
+            {diagnostic.top_issues.map(issue => <IssueCard key={issue.rank} issue={issue} />)}
+          </div>
+        )}
+
+        {tab === "actions" && (
+          <div className="fade-in" style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: 24 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: "#111827", marginBottom: 20 }}>Plano de Ação Recomendado</h2>
+            <RecSection title="Vitórias Rápidas (sem código)" items={diagnostic.recommendations_summary.quick_wins} color="#22c55e" />
+            <RecSection title="Esforço Médio (configuração técnica)" items={diagnostic.recommendations_summary.medium_effort} color="#eab308" />
+            <RecSection title="Esforço Alto (infraestrutura)" items={diagnostic.recommendations_summary.high_effort} color="#ef4444" />
+          </div>
+        )}
+      </main>
+
+      <footer style={{ borderTop: "1px solid #e5e7eb", background: "#fff", marginTop: 32, padding: 16 }}>
+        <p style={{ textAlign: "center", fontSize: 12, color: "#9ca3af", margin: 0 }}>Blind Analytics — Protótipo de Dashboard (dados simulados)</p>
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.render(<App />, document.getElementById("root"));
+</script>
+</body>
+</html>

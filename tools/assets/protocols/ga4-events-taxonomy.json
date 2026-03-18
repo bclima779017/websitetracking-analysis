@@ -1,0 +1,710 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "protocol": "GA4 eCommerce Events Taxonomy",
+    "description": "Standard GA4 eCommerce event taxonomy with required and recommended fields",
+    "language": "pt-BR",
+    "reference": "https://developers.google.com/analytics/devguides/collection/ga4/ecommerce",
+    "last_updated": "2026-03-17"
+  },
+  "events": {
+    "view_item_list": {
+      "event_name": "view_item_list",
+      "pt_br_name": "Visualizar lista de itens",
+      "description": "O usuário visualiza uma lista de itens/produtos",
+      "trigger": "Disparado quando um usuário carrega a página de categoria, busca ou listing",
+      "required_fields": [
+        "items"
+      ],
+      "required_item_fields": [
+        "item_id",
+        "item_name"
+      ],
+      "recommended_fields": [
+        "value",
+        "currency",
+        "items"
+      ],
+      "recommended_item_fields": [
+        "item_brand",
+        "item_category",
+        "item_category2",
+        "item_category3",
+        "item_variant",
+        "price",
+        "index",
+        "affiliation"
+      ],
+      "example": {
+        "event": "view_item_list",
+        "ecommerce": {
+          "item_list_id": "cat_promo_001",
+          "item_list_name": "Promoção Summer",
+          "items": [
+            {
+              "item_id": "SKU001",
+              "item_name": "Camiseta Premium",
+              "affiliation": "ecommerce_direct",
+              "price": 99.99,
+              "currency": "BRL",
+              "item_brand": "MeuBrand",
+              "item_category": "Vestuário",
+              "item_category2": "Camisetas",
+              "item_category3": "Masculino",
+              "index": 1
+            }
+          ]
+        }
+      }
+    },
+    "view_item": {
+      "event_name": "view_item",
+      "pt_br_name": "Visualizar item",
+      "description": "O usuário visualiza detalhes de um item específico",
+      "trigger": "Disparado quando um usuário carrega a página de detalhe do produto",
+      "required_fields": [
+        "items"
+      ],
+      "required_item_fields": [
+        "item_id",
+        "item_name"
+      ],
+      "recommended_fields": [
+        "value",
+        "currency"
+      ],
+      "recommended_item_fields": [
+        "price",
+        "item_brand",
+        "item_category",
+        "item_category2",
+        "item_category3",
+        "item_variant",
+        "affiliation"
+      ],
+      "example": {
+        "event": "view_item",
+        "ecommerce": {
+          "currency": "BRL",
+          "value": 149.99,
+          "items": [
+            {
+              "item_id": "SKU002",
+              "item_name": "Calça Jeans Premium",
+              "affiliation": "ecommerce_direct",
+              "price": 149.99,
+              "currency": "BRL",
+              "item_brand": "MeuBrand",
+              "item_category": "Vestuário",
+              "item_category2": "Calças",
+              "item_variant": "Preto - Tamanho M"
+            }
+          ]
+        }
+      }
+    },
+    "add_to_cart": {
+      "event_name": "add_to_cart",
+      "pt_br_name": "Adicionar ao carrinho",
+      "description": "O usuário adiciona um item ao carrinho",
+      "trigger": "Disparado quando usuário clica 'Adicionar ao Carrinho' ou equivalente",
+      "required_fields": [
+        "items"
+      ],
+      "required_item_fields": [
+        "item_id",
+        "item_name",
+        "price",
+        "quantity"
+      ],
+      "recommended_fields": [
+        "value",
+        "currency"
+      ],
+      "recommended_item_fields": [
+        "item_brand",
+        "item_category",
+        "item_category2",
+        "item_variant",
+        "affiliation",
+        "discount"
+      ],
+      "example": {
+        "event": "add_to_cart",
+        "ecommerce": {
+          "currency": "BRL",
+          "value": 149.99,
+          "items": [
+            {
+              "item_id": "SKU002",
+              "item_name": "Calça Jeans Premium",
+              "affiliation": "ecommerce_direct",
+              "price": 149.99,
+              "currency": "BRL",
+              "item_brand": "MeuBrand",
+              "item_category": "Vestuário",
+              "item_quantity": 1
+            }
+          ]
+        }
+      }
+    },
+    "remove_from_cart": {
+      "event_name": "remove_from_cart",
+      "pt_br_name": "Remover do carrinho",
+      "description": "O usuário remove um item do carrinho",
+      "trigger": "Disparado quando usuário clica 'Remover' ou equivalente no carrinho",
+      "required_fields": [
+        "items"
+      ],
+      "required_item_fields": [
+        "item_id",
+        "item_name",
+        "price"
+      ],
+      "recommended_fields": [
+        "value",
+        "currency"
+      ],
+      "recommended_item_fields": [
+        "quantity",
+        "item_brand",
+        "item_category"
+      ],
+      "example": {
+        "event": "remove_from_cart",
+        "ecommerce": {
+          "currency": "BRL",
+          "value": 149.99,
+          "items": [
+            {
+              "item_id": "SKU002",
+              "item_name": "Calça Jeans Premium",
+              "price": 149.99,
+              "quantity": 1
+            }
+          ]
+        }
+      }
+    },
+    "view_cart": {
+      "event_name": "view_cart",
+      "pt_br_name": "Visualizar carrinho",
+      "description": "O usuário visualiza o carrinho de compras",
+      "trigger": "Disparado quando usuário abre a página de carrinho",
+      "required_fields": [
+        "items"
+      ],
+      "required_item_fields": [
+        "item_id",
+        "item_name",
+        "price",
+        "quantity"
+      ],
+      "recommended_fields": [
+        "value",
+        "currency"
+      ],
+      "recommended_item_fields": [
+        "item_brand",
+        "item_category",
+        "discount",
+        "coupon"
+      ],
+      "example": {
+        "event": "view_cart",
+        "ecommerce": {
+          "currency": "BRL",
+          "value": 469.97,
+          "items": [
+            {
+              "item_id": "SKU001",
+              "item_name": "Camiseta Premium",
+              "price": 99.99,
+              "quantity": 1,
+              "coupon": "SUMMER10",
+              "discount": 10.00
+            },
+            {
+              "item_id": "SKU002",
+              "item_name": "Calça Jeans Premium",
+              "price": 149.99,
+              "quantity": 2,
+              "coupon": "SUMMER10",
+              "discount": 30.00
+            }
+          ]
+        }
+      }
+    },
+    "begin_checkout": {
+      "event_name": "begin_checkout",
+      "pt_br_name": "Iniciar checkout",
+      "description": "O usuário inicia o processo de compra",
+      "trigger": "Disparado quando usuário clica 'Checkout', 'Comprar Agora' ou similar",
+      "required_fields": [
+        "items"
+      ],
+      "required_item_fields": [
+        "item_id",
+        "item_name",
+        "price",
+        "quantity"
+      ],
+      "recommended_fields": [
+        "value",
+        "currency",
+        "coupon"
+      ],
+      "recommended_item_fields": [
+        "item_brand",
+        "item_category"
+      ],
+      "example": {
+        "event": "begin_checkout",
+        "ecommerce": {
+          "currency": "BRL",
+          "value": 439.97,
+          "coupon": "SUMMER10",
+          "items": [
+            {
+              "item_id": "SKU001",
+              "item_name": "Camiseta Premium",
+              "price": 99.99,
+              "quantity": 1
+            },
+            {
+              "item_id": "SKU002",
+              "item_name": "Calça Jeans Premium",
+              "price": 149.99,
+              "quantity": 2
+            }
+          ]
+        }
+      }
+    },
+    "add_shipping_info": {
+      "event_name": "add_shipping_info",
+      "pt_br_name": "Adicionar informações de envio",
+      "description": "O usuário adiciona informações de envio",
+      "trigger": "Disparado quando usuário preenche endereço de entrega e clica continuar",
+      "required_fields": [
+        "items"
+      ],
+      "required_item_fields": [
+        "item_id",
+        "item_name",
+        "price",
+        "quantity"
+      ],
+      "recommended_fields": [
+        "value",
+        "currency",
+        "shipping_tier",
+        "coupon"
+      ],
+      "recommended_item_fields": [
+        "item_brand",
+        "item_category"
+      ],
+      "example": {
+        "event": "add_shipping_info",
+        "ecommerce": {
+          "currency": "BRL",
+          "value": 479.97,
+          "shipping_tier": "standard_7d",
+          "coupon": "SUMMER10",
+          "items": [
+            {
+              "item_id": "SKU001",
+              "item_name": "Camiseta Premium",
+              "price": 99.99,
+              "quantity": 1
+            },
+            {
+              "item_id": "SKU002",
+              "item_name": "Calça Jeans Premium",
+              "price": 149.99,
+              "quantity": 2
+            }
+          ]
+        }
+      }
+    },
+    "add_payment_info": {
+      "event_name": "add_payment_info",
+      "pt_br_name": "Adicionar informações de pagamento",
+      "description": "O usuário adiciona método de pagamento",
+      "trigger": "Disparado quando usuário seleciona método de pagamento (cartão, boleto, etc.)",
+      "required_fields": [
+        "items"
+      ],
+      "required_item_fields": [
+        "item_id",
+        "item_name",
+        "price",
+        "quantity"
+      ],
+      "recommended_fields": [
+        "value",
+        "currency",
+        "payment_type",
+        "coupon"
+      ],
+      "recommended_item_fields": [
+        "item_brand",
+        "item_category"
+      ],
+      "example": {
+        "event": "add_payment_info",
+        "ecommerce": {
+          "currency": "BRL",
+          "value": 479.97,
+          "payment_type": "credit_card",
+          "coupon": "SUMMER10",
+          "items": [
+            {
+              "item_id": "SKU001",
+              "item_name": "Camiseta Premium",
+              "price": 99.99,
+              "quantity": 1
+            },
+            {
+              "item_id": "SKU002",
+              "item_name": "Calça Jeans Premium",
+              "price": 149.99,
+              "quantity": 2
+            }
+          ]
+        }
+      }
+    },
+    "purchase": {
+      "event_name": "purchase",
+      "pt_br_name": "Compra realizada",
+      "description": "O usuário completa uma compra",
+      "trigger": "Disparado na página de confirmação de pedido após pagamento aprovado",
+      "required_fields": [
+        "transaction_id",
+        "currency",
+        "value",
+        "items"
+      ],
+      "required_item_fields": [
+        "item_id",
+        "item_name",
+        "price",
+        "quantity"
+      ],
+      "recommended_fields": [
+        "tax",
+        "shipping",
+        "coupon",
+        "affiliation"
+      ],
+      "recommended_item_fields": [
+        "item_brand",
+        "item_category",
+        "item_category2",
+        "item_variant",
+        "discount",
+        "coupon"
+      ],
+      "example": {
+        "event": "purchase",
+        "ecommerce": {
+          "transaction_id": "ORDER123456",
+          "affiliation": "ecommerce_direct",
+          "value": 479.97,
+          "tax": 57.60,
+          "shipping": 30.00,
+          "currency": "BRL",
+          "coupon": "SUMMER10",
+          "items": [
+            {
+              "item_id": "SKU001",
+              "item_name": "Camiseta Premium",
+              "affiliation": "ecommerce_direct",
+              "price": 99.99,
+              "currency": "BRL",
+              "item_brand": "MeuBrand",
+              "item_category": "Vestuário",
+              "item_category2": "Camisetas",
+              "item_variant": "Azul - Tamanho P",
+              "quantity": 1,
+              "coupon": "SUMMER10",
+              "discount": 10.00
+            },
+            {
+              "item_id": "SKU002",
+              "item_name": "Calça Jeans Premium",
+              "affiliation": "ecommerce_direct",
+              "price": 149.99,
+              "currency": "BRL",
+              "item_brand": "MeuBrand",
+              "item_category": "Vestuário",
+              "item_category2": "Calças",
+              "item_variant": "Preto - Tamanho M",
+              "quantity": 2,
+              "coupon": "SUMMER10",
+              "discount": 15.00
+            }
+          ]
+        }
+      }
+    },
+    "refund": {
+      "event_name": "refund",
+      "pt_br_name": "Reembolso",
+      "description": "O usuário recebe um reembolso (parcial ou total)",
+      "trigger": "Disparado quando uma transação é reembolsada via sistema",
+      "required_fields": [
+        "transaction_id",
+        "items"
+      ],
+      "required_item_fields": [
+        "item_id"
+      ],
+      "recommended_fields": [
+        "value",
+        "currency"
+      ],
+      "recommended_item_fields": [
+        "item_name",
+        "price",
+        "quantity"
+      ],
+      "example": {
+        "event": "refund",
+        "ecommerce": {
+          "transaction_id": "ORDER123456",
+          "currency": "BRL",
+          "value": 299.98,
+          "items": [
+            {
+              "item_id": "SKU001",
+              "item_name": "Camiseta Premium",
+              "price": 99.99,
+              "quantity": 1
+            },
+            {
+              "item_id": "SKU002",
+              "item_name": "Calça Jeans Premium",
+              "price": 149.99,
+              "quantity": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  "required_item_fields": {
+    "item_id": {
+      "type": "string",
+      "required": true,
+      "description": "Identificador único do produto (SKU, product_id, etc.)",
+      "example": "SKU001",
+      "pt_br_description": "Identificador único do produto, geralmente SKU ou ID do catálogo"
+    },
+    "item_name": {
+      "type": "string",
+      "required": true,
+      "description": "Nome do produto",
+      "example": "Camiseta Premium",
+      "pt_br_description": "Nome comercial do produto"
+    },
+    "price": {
+      "type": "number",
+      "required": true,
+      "description": "Preço unitário do item em moeda especificada",
+      "example": 99.99,
+      "pt_br_description": "Preço unitário do produto (sem desconto, sem imposto)"
+    },
+    "quantity": {
+      "type": "integer",
+      "required": true,
+      "description": "Quantidade do item",
+      "example": 1,
+      "pt_br_description": "Quantidade de unidades compradas"
+    }
+  },
+  "recommended_item_fields": {
+    "item_brand": {
+      "type": "string",
+      "required": false,
+      "description": "Brand/manufacturer of the item",
+      "example": "MeuBrand",
+      "pt_br_description": "Marca ou fabricante do produto"
+    },
+    "item_category": {
+      "type": "string",
+      "required": false,
+      "description": "Primary product category (level 1)",
+      "example": "Vestuário",
+      "pt_br_description": "Categoria principal do produto (nível 1)"
+    },
+    "item_category2": {
+      "type": "string",
+      "required": false,
+      "description": "Secondary product category (level 2)",
+      "example": "Camisetas",
+      "pt_br_description": "Subcategoria do produto (nível 2)"
+    },
+    "item_category3": {
+      "type": "string",
+      "required": false,
+      "description": "Tertiary product category (level 3)",
+      "example": "Masculino",
+      "pt_br_description": "Categoria terciária (nível 3)"
+    },
+    "item_category4": {
+      "type": "string",
+      "required": false,
+      "description": "Quaternary product category (level 4)",
+      "example": "Casual",
+      "pt_br_description": "Categoria quaternária (nível 4)"
+    },
+    "item_category5": {
+      "type": "string",
+      "required": false,
+      "description": "Quinary product category (level 5)",
+      "example": "Cores Sólidas",
+      "pt_br_description": "Categoria quinária (nível 5)"
+    },
+    "item_variant": {
+      "type": "string",
+      "required": false,
+      "description": "Product variant (size, color, etc.)",
+      "example": "Azul - Tamanho P",
+      "pt_br_description": "Variante do produto (tamanho, cor, etc.)"
+    },
+    "coupon": {
+      "type": "string",
+      "required": false,
+      "description": "Coupon or promotional code applied",
+      "example": "SUMMER10",
+      "pt_br_description": "Código de cupom ou promoção aplicado"
+    },
+    "discount": {
+      "type": "number",
+      "required": false,
+      "description": "Discount amount in currency units",
+      "example": 10.00,
+      "pt_br_description": "Valor do desconto em unidades monetárias"
+    },
+    "index": {
+      "type": "integer",
+      "required": false,
+      "description": "Position of item in list (1-based)",
+      "example": 1,
+      "pt_br_description": "Posição do item na lista (começando em 1)"
+    },
+    "affiliation": {
+      "type": "string",
+      "required": false,
+      "description": "Store or sales channel",
+      "example": "ecommerce_direct",
+      "pt_br_description": "Loja ou canal de vendas (ex: loja_direct, marketplace_b)"
+    }
+  },
+  "recommended_event_fields": {
+    "currency": {
+      "type": "string",
+      "description": "ISO 4217 currency code",
+      "example": "BRL",
+      "pt_br_description": "Código ISO da moeda (BRL, USD, EUR, etc.)"
+    },
+    "value": {
+      "type": "number",
+      "description": "Total value of items in transaction",
+      "example": 479.97,
+      "pt_br_description": "Valor total da transação (soma dos itens)"
+    },
+    "transaction_id": {
+      "type": "string",
+      "description": "Unique transaction identifier (for purchase/refund)",
+      "example": "ORDER123456",
+      "pt_br_description": "ID único da transação/pedido"
+    },
+    "tax": {
+      "type": "number",
+      "description": "Tax amount",
+      "example": 57.60,
+      "pt_br_description": "Valor total de impostos"
+    },
+    "shipping": {
+      "type": "number",
+      "description": "Shipping cost",
+      "example": 30.00,
+      "pt_br_description": "Custo de envio"
+    },
+    "coupon": {
+      "type": "string",
+      "description": "Coupon applied to entire transaction",
+      "example": "SUMMER10",
+      "pt_br_description": "Cupom aplicado à transação"
+    },
+    "payment_type": {
+      "type": "string",
+      "description": "Payment method selected",
+      "example": "credit_card",
+      "pt_br_description": "Método de pagamento (credit_card, boleto, pix, etc.)"
+    },
+    "shipping_tier": {
+      "type": "string",
+      "description": "Shipping option selected",
+      "example": "standard_7d",
+      "pt_br_description": "Opção de envio selecionada (standard_7d, express_2d, etc.)"
+    },
+    "item_list_id": {
+      "type": "string",
+      "description": "List identifier for item_list_name context",
+      "example": "cat_promo_001",
+      "pt_br_description": "ID da lista de itens (categoria, promoção, busca, etc.)"
+    },
+    "item_list_name": {
+      "type": "string",
+      "description": "Descriptive name for list",
+      "example": "Promoção Summer",
+      "pt_br_description": "Nome descritivo da lista (ex: Promoção Summer, Novidades)"
+    }
+  },
+  "validation_rules": {
+    "price_validation": {
+      "rule": "price deve ser >= 0",
+      "pt_br_description": "Preço não pode ser negativo"
+    },
+    "quantity_validation": {
+      "rule": "quantity deve ser >= 1",
+      "pt_br_description": "Quantidade deve ser pelo menos 1"
+    },
+    "value_vs_items": {
+      "rule": "event.value deve aproximadamente igualar SUM(items[].price * items[].quantity)",
+      "pt_br_description": "Valor total deve ser igual à soma dos itens"
+    },
+    "currency_consistency": {
+      "rule": "Todos items e event devem usar mesma currency",
+      "pt_br_description": "Moeda deve ser consistente em todos itens"
+    },
+    "no_null_required": {
+      "rule": "Campos obrigatórios (item_id, item_name, price, quantity) nunca podem ser null/undefined/empty",
+      "pt_br_description": "Campos obrigatórios não podem estar vazios"
+    },
+    "discount_validation": {
+      "rule": "discount <= price",
+      "pt_br_description": "Desconto não pode ser maior que o preço do item"
+    }
+  },
+  "implementation_notes": {
+    "structure": "window.dataLayer.push() com objeto contendo 'event' e 'ecommerce' properties",
+    "timing": "Dispare eventos no momento exato do comportamento do usuário",
+    "debugging": "Use Google Tag Manager Preview ou Google Analytics Real-time para validar eventos",
+    "pt_br_notes": [
+      "Sempre use valores numéricos para price, quantity, value (não strings)",
+      "Currency deve ser ISO 4217 válido (BRL, USD, EUR, etc.)",
+      "Item IDs devem ser únicos dentro do catálogo",
+      "Recomenda-se enviar item_brand e item_category em todos eventos",
+      "Para refund, transaction_id deve corresponder a uma compra anterior"
+    ]
+  }
+}

@@ -1,0 +1,274 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "description": "Regex patterns for tag identification and SST detection in Blind Analytics diagnostic protocol",
+    "language": "pt-BR",
+    "last_updated": "2026-03-17"
+  },
+  "google_tag_manager": {
+    "script_url": {
+      "pattern": "googletagmanager\\.com/gtm\\.js",
+      "description": "GTM script tag URL pattern"
+    },
+    "container_id": {
+      "pattern": "GTM-[A-Z0-9]+",
+      "flags": "i",
+      "description": "GTM Container ID format (GTM-XXXXXXXXX)",
+      "example": "GTM-ABC123XYZ"
+    },
+    "dataLayer": {
+      "pattern": "window\\.dataLayer|dataLayer\\.push",
+      "description": "DataLayer initialization or push calls"
+    }
+  },
+  "google_analytics_4": {
+    "script_url": {
+      "pattern": "google-analytics\\.com/g/collect|google-analytics\\.com/gtag/js|www\\.googletagmanager\\.com/gtag/js",
+      "description": "GA4 script tag URLs"
+    },
+    "measurement_id": {
+      "pattern": "G-[A-Z0-9]+",
+      "flags": "i",
+      "description": "GA4 Measurement ID format (G-XXXXXXXXXX)",
+      "example": "G-XYZ789ABC"
+    },
+    "gtag_function": {
+      "pattern": "gtag\\(['\"]config['\"]",
+      "description": "gtag config call pattern"
+    }
+  },
+  "meta_pixel": {
+    "script_url": {
+      "pattern": "connect\\.facebook\\.net/fbevents\\.js|facebook\\.com/tr/",
+      "description": "Meta Pixel script URLs"
+    },
+    "pixel_id": {
+      "pattern": "id=(\\d+)|pixel_id['\"]?\\s*[:=]\\s*['\"]?(\\d+)",
+      "flags": "i",
+      "description": "Meta Pixel ID format (numeric ID)",
+      "capture_groups": ["pixel_id"]
+    },
+    "advanced_matching": {
+      "pattern": "hashed_email|hashed_phone|hashed_fn|hashed_ln|hashed_city|hashed_state|hashed_zip|hashed_country|em|ph|fn|ln|ct|st|zp|country",
+      "flags": "i",
+      "description": "Meta Advanced Matching (hashed PII) indicators"
+    }
+  },
+  "linkedin": {
+    "script_url": {
+      "pattern": "snap\\.licdn\\.com|linkedin\\.com/li/collect",
+      "description": "LinkedIn Insight Tag script URLs"
+    },
+    "partner_id": {
+      "pattern": "partner_id=(\\d+)|_linkedin_partner_id['\"]?\\s*[:=]\\s*['\"]?(\\d+)",
+      "flags": "i",
+      "description": "LinkedIn Partner ID format (numeric)",
+      "capture_groups": ["partner_id"]
+    }
+  },
+  "server_side_tracking_subdomains": {
+    "sgtm": {
+      "pattern": "^(https?://)?sgtm\\.",
+      "flags": "i",
+      "description": "Server GTM subdomain (sgtm.example.com)"
+    },
+    "data": {
+      "pattern": "^(https?://)?data\\.",
+      "flags": "i",
+      "description": "Data collection subdomain (data.example.com)"
+    },
+    "tag": {
+      "pattern": "^(https?://)?tag\\.",
+      "flags": "i",
+      "description": "Tag management subdomain (tag.example.com)"
+    },
+    "collect": {
+      "pattern": "^(https?://)?collect\\.",
+      "flags": "i",
+      "description": "Data collection subdomain (collect.example.com)"
+    },
+    "tracking": {
+      "pattern": "^(https?://)?tracking\\.",
+      "flags": "i",
+      "description": "Tracking subdomain (tracking.example.com)"
+    }
+  },
+  "sst_endpoints": {
+    "meta_capi": {
+      "pattern": "/capi/|/conversions/|/webhook/|/track/meta|/conversion/",
+      "flags": "i",
+      "description": "Meta Conversions API endpoint patterns"
+    },
+    "google_conversions": {
+      "pattern": "/gtm/collect|/conversion/|/gtm/|/ga/collect",
+      "flags": "i",
+      "description": "Google conversions endpoint patterns"
+    }
+  },
+  "cookies": {
+    "google_click_id": {
+      "pattern": "_gclid|_gcl_aw|_gcl_au",
+      "flags": "i",
+      "description": "Google Click ID cookie patterns"
+    },
+    "meta": {
+      "pattern": "_fbp|_fbc|fbp|fbc",
+      "flags": "i",
+      "description": "Meta tracking cookies (Pixel and Conversion API)"
+    },
+    "http_only_flag": {
+      "pattern": "(?:^|;)\\s*HttpOnly(?:;|$)",
+      "flags": "i",
+      "description": "HttpOnly flag in Set-Cookie header"
+    },
+    "same_site_flag": {
+      "pattern": "SameSite\\s*=\\s*(Lax|Strict|None)",
+      "flags": "i",
+      "description": "SameSite flag patterns",
+      "capture_groups": ["samesite_value"]
+    },
+    "secure_flag": {
+      "pattern": "(?:^|;)\\s*Secure(?:;|$)",
+      "flags": "i",
+      "description": "Secure flag in Set-Cookie header"
+    }
+  },
+  "utm_parameters": {
+    "utm_source": {
+      "pattern": "utm_source=([^&]+)",
+      "description": "UTM source parameter",
+      "capture_groups": ["value"]
+    },
+    "utm_medium": {
+      "pattern": "utm_medium=([^&]+)",
+      "description": "UTM medium parameter",
+      "capture_groups": ["value"]
+    },
+    "utm_campaign": {
+      "pattern": "utm_campaign=([^&]+)",
+      "description": "UTM campaign parameter",
+      "capture_groups": ["value"]
+    },
+    "utm_content": {
+      "pattern": "utm_content=([^&]+)",
+      "description": "UTM content parameter",
+      "capture_groups": ["value"]
+    },
+    "utm_term": {
+      "pattern": "utm_term=([^&]+)",
+      "description": "UTM term parameter",
+      "capture_groups": ["value"]
+    },
+    "all_utm": {
+      "pattern": "utm_(?:source|medium|campaign|content|term)=([^&]+)",
+      "description": "All UTM parameters combined"
+    }
+  },
+  "localhost_parameters": {
+    "fbclid": {
+      "pattern": "fbclid=([a-z0-9]+)",
+      "flags": "i",
+      "description": "Facebook Click ID parameter",
+      "capture_groups": ["value"]
+    },
+    "gclid": {
+      "pattern": "gclid=([a-z0-9]+)",
+      "flags": "i",
+      "description": "Google Click ID parameter",
+      "capture_groups": ["value"]
+    },
+    "msclkid": {
+      "pattern": "msclkid=([a-z0-9]+)",
+      "flags": "i",
+      "description": "Microsoft Click ID parameter",
+      "capture_groups": ["value"]
+    }
+  },
+  "ga4_events": {
+    "ecommerce_events": {
+      "pattern": "view_item_list|view_item|add_to_cart|remove_from_cart|view_cart|begin_checkout|add_shipping_info|add_payment_info|purchase|refund",
+      "description": "GA4 eCommerce event names"
+    },
+    "event_name_standard": {
+      "pattern": "event['\"]?\\s*[:=]\\s*['\"]([a-z_]+)['\"]",
+      "flags": "i",
+      "description": "Standard event property pattern",
+      "capture_groups": ["event_name"]
+    }
+  },
+  "redirection": {
+    "http_redirect_status": {
+      "pattern": "30[127]|308",
+      "description": "HTTP redirect status codes (301, 302, 303, 307, 308)"
+    },
+    "javascript_redirect": {
+      "pattern": "window\\.location(?:\\.href)?\\s*=|location\\.replace\\(|location\\.assign\\(",
+      "description": "JavaScript redirection patterns"
+    }
+  },
+  "tls_certificates": {
+    "ssl_error": {
+      "pattern": "certificate validation failed|SSL.*error|ssl.*handshake|ERR_CERT|NET::ERR_CERT|495",
+      "flags": "i",
+      "description": "SSL/TLS certificate errors"
+    }
+  },
+  "cors": {
+    "cors_error": {
+      "pattern": "Access to.*blocked by CORS|CORS policy|Access-Control-Allow",
+      "flags": "i",
+      "description": "CORS error indicators and headers"
+    }
+  },
+  "localStorage_patterns": {
+    "utm_keys": {
+      "pattern": "^utm_(?:source|medium|campaign|content|term)$",
+      "description": "localStorage keys matching UTM parameters"
+    },
+    "click_id_keys": {
+      "pattern": "^(?:gclid|fbclid|msclkid|_gclid)$",
+      "description": "localStorage keys for click IDs",
+      "flags": "i"
+    },
+    "timestamp_keys": {
+      "pattern": "(?:stored_at|timestamp|created|date|time)$",
+      "flags": "i",
+      "description": "Common timestamp key patterns"
+    }
+  },
+  "dns_lookup_patterns": {
+    "first_party_subdomain": {
+      "pattern": "^(?:[a-z0-9-]+\\.)*(?:sgtm|data|tag|collect|tracking)\\.[a-z0-9.-]+$",
+      "flags": "i",
+      "description": "First-party tracking subdomain patterns"
+    }
+  },
+  "http_status_codes": {
+    "success": {
+      "values": [200, 204],
+      "description": "Success HTTP status codes"
+    },
+    "redirect": {
+      "values": [301, 302, 303, 307, 308],
+      "description": "Redirect status codes"
+    },
+    "client_error": {
+      "values": [400, 401, 403, 404, 405, 429],
+      "description": "Client error status codes"
+    },
+    "server_error": {
+      "values": [500, 502, 503, 504],
+      "description": "Server error status codes"
+    },
+    "ssl_error": {
+      "values": [495, 496],
+      "description": "SSL-specific error codes"
+    }
+  },
+  "notes": {
+    "case_sensitivity": "Padrões com flags 'i' são case-insensitive. Sem flags = case-sensitive",
+    "capture_groups": "Índices entre [] indicam grupos de captura para extração de valores",
+    "implementation": "Use em Python com re.search(), re.findall(), ou re.match() com flags apropriadas",
+    "validation": "Todos padrões testados contra casos reais de tracking tags"
+  }
+}
