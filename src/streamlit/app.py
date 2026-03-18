@@ -19,8 +19,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import streamlit as st
 
-# Shared thread pool for Playwright calls (avoids asyncio conflicts with Streamlit)
-_executor = ThreadPoolExecutor(max_workers=1)
+# Thread pool with 2 workers: main pipeline + parallel attribution
+_executor = ThreadPoolExecutor(max_workers=2)
 
 # Pipeline helpers
 from tools.helpers.shared.config import (
@@ -33,11 +33,9 @@ from tools.helpers.shared.config import (
     ModuleScore,
 )
 from tools.helpers.shared.url_validator import validate_url
-from tools.helpers.intercept.network_interceptor import intercept_network_traffic_sync
+from tools.helpers.shared.browser_session import PipelineSession
 from tools.helpers.intercept.tag_identifier import identify_tags
-from tools.helpers.attribute.attribution_tester import test_attribution_sync
 from tools.helpers.detect.sst_detector import detect_sst
-from tools.helpers.inspect.datalayer_inspector import inspect_datalayer_sync
 from tools.helpers.report.scorer import score_module, calculate_overall
 from tools.helpers.report.report_generator import generate_report
 
@@ -146,10 +144,65 @@ def extract_domain(url: str) -> str:
 # PIPELINE
 # ============================================================================
 
+def _run_pipeline_in_session(final_url: str, domain: str) -> dict:
+    """
+    Run stages 2-5 inside a shared PipelineSession (single browser).
+
+    Called from a ThreadPoolExecutor worker to avoid Streamlit asyncio conflicts.
+    Attribution runs in parallel with DataLayer extraction via a second thread.
+
+    Returns:
+        dict with keys: requests, tag_data, attr_data, sst_data, dl_data
+    """
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+
+    with PipelineSession() as session:
+        # Stage 2: Network interception (CDP + scroll)
+        try:
+            requests = session.intercept_network(final_url)
+        except Exception as e:
+            print(f"Network interception error: {e}")
+            requests = []
+
+        # Stage 2b: Tag identification (pure Python, instant)
+        tag_data = identify_tags(requests)
+
+        # Stage 4: SST detection (pure Python, instant, depends on requests)
+        sst_data = detect_sst(requests, domain)
+
+        # Stage 3 + 5 in parallel:
+        #   - Attribution: new context in same browser (navigates UTM URL)
+        #   - DataLayer: reuses the already-rendered page (no re-navigation!)
+        with _TPE(max_workers=2) as pool:
+            attr_future = pool.submit(session.test_attribution, final_url)
+            dl_future = pool.submit(session.inspect_datalayer)
+
+            try:
+                attr_data = attr_future.result(timeout=30)
+            except Exception as e:
+                print(f"Attribution test error: {e}")
+                attr_data = AttributionResult()
+
+            try:
+                dl_data = dl_future.result(timeout=30)
+            except Exception as e:
+                print(f"DataLayer inspection error: {e}")
+                dl_data = DataLayerResult(datalayer_exists=False)
+
+    return {
+        "requests": requests,
+        "tag_data": tag_data,
+        "attr_data": attr_data,
+        "sst_data": sst_data,
+        "dl_data": dl_data,
+    }
+
+
 def run_diagnostic(url: str) -> dict:
     """
     Execute the full 6-step diagnostic pipeline.
 
+    Uses a single shared browser with parallel execution of independent stages.
     Returns the final JSON report matching sample-diagnostic.json contract.
     """
     progress = st.progress(0, text="Iniciando diagnóstico...")
@@ -169,22 +222,25 @@ def run_diagnostic(url: str) -> dict:
 
     st.success(f"URL validada: {final_url}")
 
-    # Step 2: Network Interception — run in ThreadPoolExecutor to avoid
-    # Playwright + Windows + Streamlit asyncio event loop conflicts
-    progress.progress(20, text="Etapa 2/6 — Interceptando tráfego de rede...")
+    # Steps 2-5: Run in shared browser session (single thread to Streamlit)
+    progress.progress(15, text="Etapas 2-5/6 — Analisando página (browser único)...")
 
     try:
-        future = _executor.submit(intercept_network_traffic_sync, final_url)
-        requests: list[NetworkRequest] = future.result(timeout=90)
-        st.info(f"{len(requests)} requests interceptados")
+        future = _executor.submit(_run_pipeline_in_session, final_url, domain)
+        pipeline = future.result(timeout=120)
+
+        requests = pipeline["requests"]
+        tag_data = pipeline["tag_data"]
+        attr_data = pipeline["attr_data"]
+        sst_data = pipeline["sst_data"]
+        dl_data = pipeline["dl_data"]
 
     except Exception as e:
-        st.warning(f"Erro na interceptação de rede: {type(e).__name__}: {e}. Continuando com dados parciais...")
-        requests = []
+        st.error(f"Erro no pipeline: {type(e).__name__}: {e}")
+        return None
 
-    # Step 2b: Tag Identification
-    progress.progress(35, text="Etapa 2/6 — Identificando tags...")
-    tag_data: TagIdentification = identify_tags(requests)
+    # Display captured info
+    st.info(f"{len(requests)} requests interceptados")
 
     tags_found = []
     if tag_data.gtm_ids:
@@ -201,48 +257,9 @@ def run_diagnostic(url: str) -> dict:
     else:
         st.warning("Nenhuma tag de mídia detectada")
 
-    # Step 3: Attribution Testing (via ThreadPoolExecutor)
-    progress.progress(50, text="Etapa 3/6 — Testando atribuição...")
-    try:
-        future = _executor.submit(test_attribution_sync, final_url)
-        attr_data: AttributionResult = future.result(timeout=60)
-    except Exception as e:
-        st.warning(f"Erro no teste de atribuição: {e}")
-        attr_data = AttributionResult(
-            utm_persistence_on_redirect=False,
-            redirect_strips_params=True,
-            google_click_id_cookie_dropped=False,
-            meta_click_id_cookie_dropped=False,
-            localstorage_utm_saved=False,
-        )
-
-    # Step 4: SST Detection
-    progress.progress(65, text="Etapa 4/6 — Detectando Server-Side Tracking...")
-    sst_data: SSTResult = detect_sst(requests, domain)
-
-    # Step 5: DataLayer Inspection (via ThreadPoolExecutor)
-    progress.progress(80, text="Etapa 5/6 — Avaliando DataLayer...")
-    try:
-        future = _executor.submit(inspect_datalayer_sync, final_url)
-        dl_data: DataLayerResult = future.result(timeout=60)
-    except Exception as e:
-        st.warning(f"Erro na inspeção do DataLayer: {e}")
-        dl_data = DataLayerResult(
-            datalayer_exists=False,
-            sample_events=[],
-            datalayer_events_count=0,
-            standard_events_detected=[],
-            ga4_schema_compliant=False,
-            ecommerce_items_array=False,
-            required_fields_present=[],
-            missing_required_fields=["item_id", "item_name", "price", "quantity"],
-            missing_recommended_fields=[],
-        )
-
     # Step 6: Scoring & Report
     progress.progress(90, text="Etapa 6/6 — Calculando scores e gerando relatório...")
 
-    # Score each module
     tracking_score = score_module("tracking_infrastructure", tag_data.model_dump())
     attribution_score = score_module("attribution_health", attr_data.model_dump())
     sst_score = score_module("server_side_tracking", sst_data.model_dump())
@@ -251,7 +268,6 @@ def run_diagnostic(url: str) -> dict:
     all_scores = [tracking_score, attribution_score, sst_score, datalayer_score]
     overall = calculate_overall(all_scores)
 
-    # Generate full report (returns DiagnosticReport Pydantic model)
     diagnostic = generate_report(
         url=domain,
         tag_data=tag_data,
@@ -262,7 +278,6 @@ def run_diagnostic(url: str) -> dict:
         overall=overall,
     )
 
-    # Convert to dict for rendering
     report = diagnostic.model_dump()
 
     progress.progress(100, text="Diagnóstico concluído!")
