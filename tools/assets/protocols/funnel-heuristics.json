@@ -13,23 +13,26 @@
         "/department/", "/listing/"
       ],
       "path_regex": "/(category|categor|collection|shop|browse|departamento|catalog|loja|produtos|colecao|secao|department|listing)(/|$)",
-      "weight": 0.7
+      "weight": 0.7,
+      "sitemap_name_contains": ["category"]
     },
     "product": {
       "path_contains": [
         "/product/", "/products/", "/p/", "/dp/", "/item/",
         "/produto/", "/pd/", "/sku/", "/detail/"
       ],
-      "path_regex": "/(product|produto|item|dp|p|pd|detail)/[^/]+",
+      "path_regex": "/(product|produto|item|dp|pd|detail)/[^/]+|/[^/]+/p$",
       "sku_regex": "/[A-Z0-9]{5,}(/|$|\\?)",
-      "slug_regex": "/[a-z0-9-]+-\\d{4,}(/|$|\\?)",
-      "weight": 0.8
+      "slug_regex": "/[a-z0-9-]+-[a-z]{2,3}\\d{4,}/p$|/[a-z0-9-]+-\\d{4,}(/|$|\\?)",
+      "weight": 0.8,
+      "sitemap_name_contains": ["product"]
     },
     "cart": {
       "path_contains": [
-        "/cart", "/carrinho", "/basket", "/bag",
+        "/cart/", "/carrinho", "/basket", "/bag/",
         "/sacola", "/cesta", "/minicart"
       ],
+      "path_exact": ["/cart"],
       "path_regex": "/(cart|carrinho|basket|bag|sacola|cesta|minicart)(/|$|\\?)",
       "weight": 0.9
     },

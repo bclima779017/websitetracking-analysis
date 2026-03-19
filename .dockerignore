@@ -1,0 +1,34 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+
+# Node (Stage C — not used yet)
+node_modules/
+.next/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Data / cache (regenerated at runtime)
+data/cache/
+data/reports/
+pipeline_stderr.txt
+
+# Docs (not needed in container)
+docs/
+
+# Tests (not needed in prod)
+tests/
+
+# Environment
+.env
+.env.local

@@ -144,6 +144,53 @@ def extract_domain(url: str) -> str:
     return parsed.netloc or parsed.path.split("/")[0]
 
 
+@st.cache_resource(show_spinner="Verificando navegador Chromium...")
+def check_browser_available() -> tuple[bool, str]:
+    """Check/install Playwright Chromium once per app session.
+
+    Returns (available, message).
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode == 0:
+            return True, "Chromium disponível"
+        return False, f"Falha ao instalar Chromium: {result.stderr[:200]}"
+    except subprocess.TimeoutExpired:
+        return False, "Timeout ao instalar Chromium"
+    except Exception as e:
+        return False, f"Erro: {e}"
+
+
+def _parse_pipeline_stderr(stderr: str) -> list[dict]:
+    """Parse structured JSON-line stderr from run_browser_pipeline into messages."""
+    messages = []
+    for line in stderr.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+            messages.append(msg)
+        except json.JSONDecodeError:
+            # Legacy plain-text message
+            messages.append({"stage": "pipeline", "status": "info", "detail": line})
+    return messages
+
+
+def _render_pipeline_progress(messages: list[dict], container):
+    """Render structured pipeline messages as formatted status items."""
+    status_icons = {"ok": "✅", "running": "🔄", "error": "❌", "info": "ℹ️"}
+    for msg in messages:
+        icon = status_icons.get(msg.get("status", "info"), "ℹ️")
+        stage = msg.get("stage", "")
+        detail = msg.get("detail", "")
+        if detail:
+            container.caption(f"{icon} **{stage}**: {detail}")
+
+
 # ============================================================================
 # FUNNEL PAGES DISPLAY
 # ============================================================================
@@ -354,7 +401,20 @@ def run_diagnostic(url: str) -> dict:
         st.session_state["funnel_selection"] = None
 
     # Steps 2, 3, 5: Browser pipeline in subprocess (complete process isolation)
-    progress.progress(15, text="Etapas 2-5/6 — Analisando página...")
+    progress.progress(15, text="Etapas 2-5/6 — Verificando navegador e analisando página...")
+
+    # Check browser availability (cached — runs once per session)
+    browser_ok, browser_msg = check_browser_available()
+    if not browser_ok:
+        st.error(
+            f"🚫 **Navegador indisponível**: {browser_msg}\n\n"
+            "Instale manualmente com: `playwright install chromium`\n\n"
+            "Os módulos que dependem de navegador (Tracking, Attribution, DataLayer) "
+            "não poderão ser avaliados."
+        )
+        browser_unavailable = True
+    else:
+        browser_unavailable = False
 
     script = PROJECT_ROOT / "tools" / "helpers" / "run_browser_pipeline.py"
 
@@ -377,16 +437,38 @@ def run_diagnostic(url: str) -> dict:
             cwd=str(PROJECT_ROOT),
         )
 
+        # Parse and display structured progress messages
         if proc.stderr:
-            st.caption(f"Log: {proc.stderr.strip()[:200]}")
+            log_container = st.container()
+            messages = _parse_pipeline_stderr(proc.stderr)
+            _render_pipeline_progress(messages, log_container)
 
-        pipeline = json.loads(proc.stdout or '{"requests":[],"dl_data":{},"attr_data":{},"per_page_dl":{}}')
+        pipeline = json.loads(proc.stdout or '{}')
+
+        # Handle structured browser error from subprocess
+        if pipeline.get("browser_error"):
+            st.error(
+                f"🚫 **Erro no navegador**: {pipeline['browser_error']}\n\n"
+                "Os módulos de Tracking, Attribution e DataLayer serão marcados como não avaliados."
+            )
+            browser_unavailable = True
+
+        # If pipeline returned empty/missing data, use safe defaults
+        if not pipeline.get("requests") and not pipeline.get("browser_error"):
+            pipeline.setdefault("requests", [])
+        pipeline.setdefault("requests", [])
+        pipeline.setdefault("dl_data", {})
+        pipeline.setdefault("attr_data", {})
+        pipeline.setdefault("per_page_dl", {})
 
     except subprocess.TimeoutExpired:
-        st.error(f"Timeout: a análise excedeu {timeout} segundos.")
+        st.error(f"⏱️ Timeout: a análise excedeu {timeout} segundos.")
+        return None
+    except json.JSONDecodeError:
+        st.error("❌ Erro ao interpretar resultado do pipeline. Saída inválida.")
         return None
     except Exception as e:
-        st.error(f"Erro no pipeline: {type(e).__name__}: {e}")
+        st.error(f"❌ Erro no pipeline: {type(e).__name__}: {e}")
         return None
 
     # Merge spider-discovered pages back into FunnelSelection for display
@@ -433,6 +515,8 @@ def run_diagnostic(url: str) -> dict:
 
     if tags_found:
         st.info(f"Tags detectadas: {' | '.join(tags_found)}")
+    elif browser_unavailable:
+        st.warning("⚠️ Tags não verificadas — navegador indisponível")
     else:
         st.warning("Nenhuma tag de mídia detectada")
 
@@ -466,6 +550,13 @@ def run_diagnostic(url: str) -> dict:
     attribution_score = score_module("attribution_health", attr_data.model_dump())
     sst_score = score_module("server_side_tracking", sst_data.model_dump())
     datalayer_score = score_module("datalayer_depth", dl_data.model_dump(), funnel_data=funnel_data_for_scorer)
+
+    # Mark browser-dependent modules as unevaluated if browser was unavailable
+    if browser_unavailable:
+        for mod in [tracking_score, attribution_score, datalayer_score]:
+            mod.evaluated = False
+            mod.comment = "Módulo não avaliado — navegador indisponível no ambiente de execução."
+            mod.rating = "Não avaliado"
 
     all_scores = [tracking_score, attribution_score, sst_score, datalayer_score]
     overall = calculate_overall(all_scores)
@@ -551,6 +642,13 @@ def render_dashboard(report: dict):
     st.markdown(f"## {emoji} Maturidade: {score:.2f}/5 — {rating}")
     st.markdown(f"*{overall.get('general_comment', '')}*")
 
+    unevaluated = overall.get("unevaluated_modules", [])
+    if unevaluated:
+        st.warning(
+            f"⚠️ {len(unevaluated)} módulo(s) não avaliado(s) por indisponibilidade do navegador. "
+            "O score reflete apenas os módulos que puderam ser verificados."
+        )
+
     # Module score cards
     st.markdown("### Scores por Módulo")
 
@@ -565,18 +663,29 @@ def render_dashboard(report: dict):
     for i, (key, (icon, label)) in enumerate(module_labels.items()):
         module = modules.get(key, {})
         mod_score = module.get("score", 0)
-        mod_emoji = get_score_emoji(mod_score)
-        css_class = get_score_class(mod_score)
+        is_evaluated = module.get("evaluated", True)
 
         with cols[i]:
-            st.markdown(
-                f'<div class="score-card {css_class}">'
-                f'<h2>{mod_emoji} {mod_score}/5</h2>'
-                f'<p><strong>{icon} {label}</strong></p>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            st.caption(module.get("comment", ""))
+            if not is_evaluated:
+                st.markdown(
+                    f'<div class="score-card" style="background-color: #f3f4f6; border-left: 4px solid #9ca3af;">'
+                    f'<h2>⚪ N/A</h2>'
+                    f'<p><strong>{icon} {label}</strong></p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(module.get("comment", "Não avaliado"))
+            else:
+                mod_emoji = get_score_emoji(mod_score)
+                css_class = get_score_class(mod_score)
+                st.markdown(
+                    f'<div class="score-card {css_class}">'
+                    f'<h2>{mod_emoji} {mod_score}/5</h2>'
+                    f'<p><strong>{icon} {label}</strong></p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(module.get("comment", ""))
 
     # Funnel DataLayer per-page analysis
     funnel_analysis = report.get("funnel_analysis")

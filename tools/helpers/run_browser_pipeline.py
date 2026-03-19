@@ -16,11 +16,13 @@ Output:
     Printed to stdout. Errors to stderr.
 """
 
+import os
 import sys
 import json
 import time
 import random
 import asyncio
+import subprocess as _subprocess
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -570,8 +572,77 @@ async def spider_for_gaps(
 
 
 # ---------------------------------------------------------------------------
+# Browser availability check + auto-install
+# ---------------------------------------------------------------------------
+
+def _log(stage: str, status: str, detail: str = "") -> None:
+    """Emit structured progress to stderr for the Streamlit frontend."""
+    msg = json.dumps({"stage": stage, "status": status, "detail": detail})
+    print(msg, file=sys.stderr, flush=True)
+
+
+async def _ensure_browser() -> tuple[bool, str]:
+    """Check if Chromium is available; try to install if missing.
+
+    Returns:
+        (success, error_message) — error_message is empty on success.
+    """
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            exe = p.chromium.executable_path
+            if os.path.exists(exe):
+                return True, ""
+    except Exception:
+        pass
+
+    # Attempt auto-install
+    _log("browser_install", "running", "Browser Chromium não encontrado. Tentando instalar...")
+    try:
+        proc = _subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=180,
+        )
+        if proc.returncode == 0:
+            _log("browser_install", "ok", "Chromium instalado com sucesso.")
+            return True, ""
+
+        # Try with --with-deps (Linux deploy environments)
+        proc2 = _subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+            capture_output=True, text=True, timeout=240,
+        )
+        if proc2.returncode == 0:
+            _log("browser_install", "ok", "Chromium + deps instalados com sucesso.")
+            return True, ""
+
+        error = (proc.stderr or proc2.stderr)[:300]
+        _log("browser_install", "error", error)
+        return False, f"Falha ao instalar Chromium: {error}"
+    except Exception as e:
+        msg = f"Erro durante instalação: {type(e).__name__}: {e}"
+        _log("browser_install", "error", msg)
+        return False, msg
+
+
+# ---------------------------------------------------------------------------
 # Main: single browser, all stages, JSON output
 # ---------------------------------------------------------------------------
+
+def _empty_result(browser_error: str = "") -> dict:
+    """Return a structured empty result with error info."""
+    return {
+        "status": "browser_unavailable" if browser_error else "ok",
+        "browser_error": browser_error,
+        "requests": [],
+        "dl_data": {},
+        "attr_data": {},
+        "per_page_dl": {},
+        "funnel_pages": {},
+        "spider_stats": {},
+        "stage_results": {},
+    }
+
 
 async def run_all(
     url: str,
@@ -581,6 +652,13 @@ async def run_all(
 ) -> dict:
     from playwright.async_api import async_playwright
 
+    # Check browser availability before launching
+    browser_ok, browser_error = await _ensure_browser()
+    if not browser_ok:
+        return _empty_result(browser_error)
+
+    stage_results: dict[str, str] = {}
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
 
@@ -588,7 +666,7 @@ async def run_all(
         spider_result: dict = {}
         final_funnel_pages = dict(funnel_pages or {})
         if gaps:
-            print(f"Spider: filling gaps {gaps}", file=sys.stderr)
+            _log("spider", "running", f"Preenchendo gaps: {gaps}")
             try:
                 spider_result = await spider_for_gaps(
                     browser, url, final_funnel_pages, gaps,
@@ -596,12 +674,12 @@ async def run_all(
                 for stage_key, page_info in spider_result.get("funnel_pages", {}).items():
                     if page_info and stage_key not in final_funnel_pages:
                         final_funnel_pages[stage_key] = page_info["url"]
-                print(
-                    f"Spider: found {spider_result.get('spider_stats', {}).get('spider_urls', 0)} pages",
-                    file=sys.stderr,
-                )
+                found = spider_result.get("spider_stats", {}).get("spider_urls", 0)
+                _log("spider", "ok", f"{found} páginas encontradas")
+                stage_results["spider"] = "ok"
             except Exception as e:
-                print(f"Spider failed: {type(e).__name__}: {e}", file=sys.stderr)
+                _log("spider", "error", f"{type(e).__name__}: {e}")
+                stage_results["spider"] = f"error:{e}"
 
         # Main context for network + dataLayer
         context = await browser.new_context(
@@ -616,33 +694,55 @@ async def run_all(
         cdp = await context.new_cdp_session(page)
 
         # Stage 2: Network interception
+        _log("intercept", "running", f"Interceptando rede: {url}")
         requests = await intercept_network(page, cdp, url)
         await cdp.detach()
+        _log("intercept", "ok", f"{len(requests)} requests capturados")
+        stage_results["intercept"] = "ok" if requests else "empty"
 
         # Stage 5: DataLayer (same page, no re-navigation — legacy single-page)
+        _log("datalayer", "running", "Extraindo DataLayer da página principal")
         dl_data = await inspect_datalayer(page)
+        _log("datalayer", "ok", f"dataLayer exists: {dl_data.get('datalayer_exists', False)}")
+        stage_results["datalayer"] = "ok"
 
         await context.close()
 
         # Stage 3: Attribution (separate context)
-        attr_data = await test_attribution(browser, url)
+        _log("attribution", "running", "Testando atribuição (UTMs, cookies)")
+        try:
+            attr_data = await test_attribution(browser, url)
+            _log("attribution", "ok", f"Cookies: {len(attr_data.get('cookies_found', []))}")
+            stage_results["attribution"] = "ok"
+        except Exception as e:
+            _log("attribution", "error", f"{type(e).__name__}: {e}")
+            attr_data = {}
+            stage_results["attribution"] = f"error:{e}"
 
         # Per-page DataLayer analysis (uses merged pages including spider results)
         per_page_dl = {}
         if final_funnel_pages:
             for stage, page_url in final_funnel_pages.items():
-                print(f"Inspecting DataLayer: {stage} -> {page_url}", file=sys.stderr)
-                per_page_dl[stage] = await inspect_page_datalayer(browser, page_url)
+                _log("page_datalayer", "running", f"{stage} → {page_url}")
+                try:
+                    per_page_dl[stage] = await inspect_page_datalayer(browser, page_url)
+                except Exception as e:
+                    _log("page_datalayer", "error", f"{stage}: {e}")
+                    per_page_dl[stage] = {"url": page_url, "accessible": False}
+            stage_results["page_datalayer"] = "ok"
 
         await browser.close()
 
     return {
+        "status": "ok",
+        "browser_error": "",
         "requests": requests,
         "dl_data": dl_data,
         "attr_data": attr_data,
         "per_page_dl": per_page_dl,
         "funnel_pages": spider_result.get("funnel_pages", {}),
         "spider_stats": spider_result.get("spider_stats", {}),
+        "stage_results": stage_results,
     }
 
 
@@ -677,8 +777,8 @@ def main():
     try:
         result = asyncio.run(run_all(url, domain, funnel_pages=funnel_pages, gaps=gaps))
     except Exception as e:
-        print(f"Pipeline error: {type(e).__name__}: {e}", file=sys.stderr)
-        result = {"requests": [], "dl_data": {}, "attr_data": {}, "per_page_dl": {}}
+        _log("pipeline", "error", f"{type(e).__name__}: {e}")
+        result = _empty_result(f"Pipeline error: {type(e).__name__}: {e}")
 
     print(json.dumps(result, default=str))
 

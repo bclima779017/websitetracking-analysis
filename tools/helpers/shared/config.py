@@ -87,6 +87,7 @@ class DiscoveredUrl(BaseModel):
     source: str = Field(..., description="How discovered: 'sitemap' or 'spider'")
     sitemap_priority: Optional[float] = Field(default=None, description="Priority from sitemap (0.0-1.0)")
     sitemap_lastmod: Optional[str] = Field(default=None, description="Last modification date from sitemap")
+    sitemap_name: Optional[str] = Field(default=None, description="Child sitemap filename (e.g., 'product-0.xml') for classification boost")
     depth: int = Field(default=0, description="Spider depth from homepage (0 = homepage)")
 
 
@@ -304,6 +305,7 @@ class ModuleScore(BaseModel):
     max_score: float = Field(default=5.0, description="Maximum possible score")
     comment: str = Field(..., description="Module evaluation comment (PT-BR)")
     rating: str = Field(..., description="Rating label (Crítico, Básico, Intermediário, Avançado, Excelente)")
+    evaluated: bool = Field(default=True, description="False if module could not be evaluated (e.g., browser unavailable)")
     data: dict[str, Any] = Field(default_factory=dict, description="Module-specific data")
     evidence: list[dict[str, Any]] = Field(default_factory=list, description="Evidence items supporting the score")
     scoring_breakdown: str = Field(

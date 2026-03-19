@@ -29,16 +29,22 @@ from tools.helpers.discover.sitemap_parser import fetch_sitemap, fetch_sitemap_s
 # ============================================================================
 
 
-def classify_url(url: str, heuristics: dict | None = None) -> ClassifiedUrl:
+def classify_url(
+    url: str,
+    heuristics: dict | None = None,
+    sitemap_name: str | None = None,
+) -> ClassifiedUrl:
     """
     Classify a single URL into a funnel stage using URL-pattern heuristics.
 
     Pure function, no network access. Applies regex and path-contains patterns
-    from funnel-heuristics.json against the URL path.
+    from funnel-heuristics.json against the URL path. Optionally uses the
+    child sitemap filename (e.g., 'product-0.xml') as a classification signal.
 
     Args:
         url: Absolute URL to classify
         heuristics: Pre-loaded heuristics dict. Loaded from asset if None.
+        sitemap_name: Optional child sitemap filename for classification boost.
 
     Returns:
         ClassifiedUrl with stage, confidence, and signals list.
@@ -74,6 +80,16 @@ def classify_url(url: str, heuristics: dict | None = None) -> ClassifiedUrl:
     for stage_key, stage_enum in stage_order:
         stage_patterns = patterns.get(stage_key, {})
         weight = stage_patterns.get("weight", 0.5)
+
+        # Check path_exact patterns (highest confidence for this stage)
+        exact_list = stage_patterns.get("path_exact", [])
+        if path in [p.lower() for p in exact_list]:
+            return ClassifiedUrl(
+                url=url,
+                stage=stage_enum,
+                confidence=weight,
+                classification_signals=[f"url_exact:{path}"],
+            )
 
         # Check path_contains patterns
         contains_list = stage_patterns.get("path_contains", [])
@@ -128,6 +144,21 @@ def classify_url(url: str, heuristics: dict | None = None) -> ClassifiedUrl:
                 )
         except re.error:
             pass
+
+    # Sitemap-name-based classification (e.g., URL from "product-0.xml" → product)
+    if sitemap_name:
+        sitemap_name_lower = sitemap_name.lower()
+        for stage_key, stage_enum in stage_order:
+            stage_patterns = patterns.get(stage_key, {})
+            name_hints = stage_patterns.get("sitemap_name_contains", [])
+            for hint in name_hints:
+                if hint in sitemap_name_lower:
+                    return ClassifiedUrl(
+                        url=url,
+                        stage=stage_enum,
+                        confidence=stage_patterns.get("weight", 0.5) * 0.8,
+                        classification_signals=[f"sitemap_name:{sitemap_name}"],
+                    )
 
     # No match
     return ClassifiedUrl(
@@ -460,7 +491,10 @@ async def select_funnel_pages_async(
             stats["sitemap_urls"] = len(sitemap_urls)
 
             for discovered in sitemap_urls:
-                classified = classify_url(discovered.url, heuristics)
+                classified = classify_url(
+                    discovered.url, heuristics,
+                    sitemap_name=discovered.sitemap_name,
+                )
                 classified.source = "sitemap"
                 classified.sitemap_priority = discovered.sitemap_priority
                 if classified.stage != FunnelStage.OTHER:

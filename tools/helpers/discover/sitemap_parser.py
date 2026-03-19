@@ -74,11 +74,13 @@ async def fetch_sitemap(
                 seen.add(u)
                 unique_urls.append(u)
 
+        seen_urls: set[str] = set()
         for sitemap_url in unique_urls:
             urls = await _fetch_and_parse(client, sitemap_url, origin, depth=0)
-            if urls:
-                discovered.extend(urls)
-                break  # Use first successful sitemap
+            for u in urls:
+                if u.url not in seen_urls:
+                    seen_urls.add(u.url)
+                    discovered.append(u)
 
     # Sort by priority descending (highest priority first)
     discovered.sort(key=lambda u: u.sitemap_priority or 0.0, reverse=True)
@@ -118,7 +120,7 @@ async def _fetch_and_parse(
     sitemap_url: str,
     origin: str,
     depth: int = 0,
-    max_depth: int = 2,
+    max_depth: int = 3,
 ) -> list[DiscoveredUrl]:
     """
     Fetch a sitemap URL and parse its content recursively.
@@ -167,6 +169,9 @@ async def _fetch_and_parse(
     if tag.startswith("{"):
         ns = tag[: tag.index("}") + 1]
 
+    # Extract sitemap filename for classification boost (e.g., "product-0.xml")
+    sitemap_name = sitemap_url.rsplit("/", 1)[-1] if "/" in sitemap_url else None
+
     # Check if this is a sitemap index — recurse into child sitemaps
     sitemap_entries = root.findall(f"{ns}sitemap")
     if sitemap_entries:
@@ -177,7 +182,7 @@ async def _fetch_and_parse(
                 child_urls.append(loc.text.strip())
 
         discovered: list[DiscoveredUrl] = []
-        for child_url in child_urls[:10]:  # Limit to 10 child sitemaps
+        for child_url in child_urls[:20]:  # Limit to 20 child sitemaps
             child_results = await _fetch_and_parse(
                 client, child_url, origin, depth + 1, max_depth,
             )
@@ -185,13 +190,14 @@ async def _fetch_and_parse(
         return discovered
 
     # This is a urlset — extract URLs
-    return _parse_urlset(root, ns, origin)
+    return _parse_urlset(root, ns, origin, sitemap_name=sitemap_name)
 
 
 def _parse_urlset(
     root: ET.Element,
     ns: str,
     origin: str,
+    sitemap_name: str | None = None,
 ) -> list[DiscoveredUrl]:
     """
     Parse a <urlset> XML element into DiscoveredUrl objects.
@@ -244,6 +250,7 @@ def _parse_urlset(
                 source="sitemap",
                 sitemap_priority=priority,
                 sitemap_lastmod=lastmod,
+                sitemap_name=sitemap_name,
                 depth=0,
             )
         )

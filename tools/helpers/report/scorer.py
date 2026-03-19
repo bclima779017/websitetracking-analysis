@@ -398,13 +398,15 @@ def calculate_overall(scores: list[ModuleScore]) -> dict[str, Any]:
     """
     Calculate overall maturity score from module scores.
 
-    Computes weighted average of all 4 modules and assigns overall rating.
+    Computes weighted average of evaluated modules only. Modules marked as
+    not evaluated (e.g., browser unavailable) are excluded from the average.
 
     Args:
         scores: List of ModuleScore objects for all modules
 
     Returns:
-        Dictionary with score, max_score, rating, and general_comment
+        Dictionary with score, max_score, rating, general_comment, and
+        unevaluated_modules list.
     """
     if not scores:
         return {
@@ -412,10 +414,23 @@ def calculate_overall(scores: list[ModuleScore]) -> dict[str, Any]:
             "max_score": 5.0,
             "rating": "Crítico",
             "general_comment": "Diagnóstico incompleto.",
+            "unevaluated_modules": [],
         }
 
-    total_score = sum(s.score for s in scores)
-    average_score = total_score / len(scores) if scores else 0
+    evaluated = [s for s in scores if s.evaluated]
+    unevaluated = [s.module_name for s in scores if not s.evaluated]
+
+    if not evaluated:
+        return {
+            "score": 0,
+            "max_score": 5.0,
+            "rating": "Indisponível",
+            "general_comment": "Nenhum módulo pôde ser avaliado. Verifique se o navegador está disponível no ambiente de deploy.",
+            "unevaluated_modules": unevaluated,
+        }
+
+    total_score = sum(s.score for s in evaluated)
+    average_score = total_score / len(evaluated)
 
     # Determine overall rating
     if average_score >= 4.5:
@@ -434,9 +449,16 @@ def calculate_overall(scores: list[ModuleScore]) -> dict[str, Any]:
         rating = "Crítico"
         comment = "A operação apresenta falhas graves em rastreamento e atribuição. Intervenção urgente necessária."
 
-    return {
+    result = {
         "score": round(average_score, 2),
         "max_score": 5.0,
         "rating": rating,
         "general_comment": comment,
+        "unevaluated_modules": unevaluated,
     }
+    if unevaluated:
+        result["general_comment"] += (
+            f" Nota: {len(unevaluated)} módulo(s) não pôde(ram) ser avaliado(s)"
+            " por indisponibilidade do navegador."
+        )
+    return result
