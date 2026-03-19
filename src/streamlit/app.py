@@ -10,6 +10,7 @@ Usage:
 import sys
 import json
 import subprocess
+import tempfile
 import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
@@ -444,50 +445,59 @@ def run_diagnostic(url: str) -> dict:
         cmd.extend(["--gaps", json.dumps(gaps_list)])
         timeout = 180
 
+    # Use a temp file for stdout to avoid pipe deadlock (large JSON output
+    # can fill the OS pipe buffer while we block reading stderr line-by-line).
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=str(PROJECT_ROOT),
-        )
+        with tempfile.NamedTemporaryFile(
+            mode="w+", suffix=".json", delete=False, encoding="utf-8",
+        ) as stdout_file:
+            stdout_path = stdout_file.name
 
-        # Stream stderr line-by-line to update progress in real time
-        log_container = st.container()
-        status_icons = {"ok": "✅", "running": "🔄", "error": "❌", "info": "ℹ️"}
-        stderr_lines = []
+            proc = subprocess.Popen(
+                cmd,
+                stdout=stdout_file,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=str(PROJECT_ROOT),
+            )
 
-        for line in proc.stderr:
-            line = line.strip()
-            if not line:
-                continue
-            stderr_lines.append(line)
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                msg = {"stage": "pipeline", "status": "info", "detail": line}
+            # Stream stderr line-by-line to update progress in real time
+            log_container = st.container()
+            status_icons = {"ok": "✅", "running": "🔄", "error": "❌", "info": "ℹ️"}
 
-            # Update progress bar based on stage
-            stage = msg.get("stage", "")
-            pct, desc = _stage_to_progress(stage)
-            if pct is not None:
-                progress.progress(pct, text=desc)
+            for line in proc.stderr:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    msg = {"stage": "pipeline", "status": "info", "detail": line}
 
-            # Show the log line
-            icon = status_icons.get(msg.get("status", "info"), "ℹ️")
-            detail = msg.get("detail", "")
-            if detail:
-                log_container.caption(f"{icon} **{stage}**: {detail}")
+                # Update progress bar based on stage
+                stage = msg.get("stage", "")
+                pct, desc = _stage_to_progress(stage)
+                if pct is not None:
+                    progress.progress(pct, text=desc)
 
-        # Wait for process to finish and collect stdout
-        stdout, _ = proc.communicate(timeout=timeout)
+                # Show the log line
+                icon = status_icons.get(msg.get("status", "info"), "ℹ️")
+                detail = msg.get("detail", "")
+                if detail:
+                    log_container.caption(f"{icon} **{stage}**: {detail}")
 
-        if proc.returncode != 0 and not stdout:
+            # stderr is exhausted — process has finished writing; wait for exit
+            proc.wait(timeout=timeout)
+
+        # Read stdout from temp file
+        stdout_data = Path(stdout_path).read_text(encoding="utf-8")
+        Path(stdout_path).unlink(missing_ok=True)
+
+        if proc.returncode != 0 and not stdout_data.strip():
             st.error("❌ O pipeline retornou erro.")
             return None
 
-        pipeline = json.loads(stdout or '{}')
+        pipeline = json.loads(stdout_data or '{}')
 
         # Handle structured browser error from subprocess
         if pipeline.get("browser_error"):
@@ -507,6 +517,7 @@ def run_diagnostic(url: str) -> dict:
 
     except subprocess.TimeoutExpired:
         proc.kill()
+        Path(stdout_path).unlink(missing_ok=True)
         st.error(f"⏱️ Timeout: a análise excedeu {timeout} segundos.")
         return None
     except json.JSONDecodeError:
@@ -545,7 +556,7 @@ def run_diagnostic(url: str) -> dict:
     st.info(f"{len(requests)} requests interceptados")
 
     # Step 2b: Tag Identification (pure Python)
-    progress.progress(60, text="Etapa 2/6 — Identificando tags...")
+    progress.progress(85, text="Etapa 2b/6 — Identificando tags...")
     tag_data: TagIdentification = identify_tags(requests)
 
     tags_found = []
@@ -566,7 +577,7 @@ def run_diagnostic(url: str) -> dict:
         st.warning("Nenhuma tag de mídia detectada")
 
     # Step 4: SST Detection (pure Python)
-    progress.progress(70, text="Etapa 4/6 — Detectando Server-Side Tracking...")
+    progress.progress(88, text="Etapa 4/6 — Detectando Server-Side Tracking...")
     sst_data: SSTResult = detect_sst(requests, domain)
 
     # Parse attribution and dataLayer from subprocess
@@ -589,11 +600,16 @@ def run_diagnostic(url: str) -> dict:
             st.warning(f"Erro na análise de funil por página: {e}")
 
     # Step 6: Scoring & Report
-    progress.progress(90, text="Etapa 6/6 — Calculando scores e gerando relatório...")
-
+    progress.progress(90, text="Etapa 6/6 — Scoring: Tracking Infrastructure...")
     tracking_score = score_module("tracking_infrastructure", tag_data.model_dump())
+
+    progress.progress(92, text="Etapa 6/6 — Scoring: Attribution Health...")
     attribution_score = score_module("attribution_health", attr_data.model_dump())
+
+    progress.progress(94, text="Etapa 6/6 — Scoring: Server-Side Tracking...")
     sst_score = score_module("server_side_tracking", sst_data.model_dump())
+
+    progress.progress(96, text="Etapa 6/6 — Scoring: DataLayer Depth...")
     datalayer_score = score_module("datalayer_depth", dl_data.model_dump(), funnel_data=funnel_data_for_scorer)
 
     # Mark browser-dependent modules as unevaluated if browser was unavailable
@@ -606,6 +622,7 @@ def run_diagnostic(url: str) -> dict:
     all_scores = [tracking_score, attribution_score, sst_score, datalayer_score]
     overall = calculate_overall(all_scores)
 
+    progress.progress(98, text="Etapa 6/6 — Gerando relatório final...")
     diagnostic = generate_report(
         url=domain,
         tag_data=tag_data,
