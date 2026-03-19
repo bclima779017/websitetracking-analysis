@@ -404,7 +404,6 @@ def run_diagnostic(url: str) -> dict:
     try:
         selection: FunnelSelection = select_funnel_pages(final_url, use_spider=False)
         st.session_state["funnel_selection"] = selection
-        render_funnel_pages(selection)
 
         # Build {stage: url} dict for subprocess
         funnel_pages_dict = {}
@@ -547,6 +546,9 @@ def run_diagnostic(url: str) -> dict:
             if selection.pages.get(stage) is None
         ]
         st.session_state["funnel_selection"] = selection
+
+    # Render funnel pages once (after spider merge, so all sources are included)
+    if selection:
         render_funnel_pages(selection)
 
     # Parse subprocess results into Pydantic models
