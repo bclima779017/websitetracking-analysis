@@ -191,6 +191,22 @@ def _render_pipeline_progress(messages: list[dict], container):
             container.caption(f"{icon} **{stage}**: {detail}")
 
 
+_STAGE_PROGRESS = {
+    "browser_install": (18, "Preparando navegador..."),
+    "spider":          (25, "Buscando páginas do funil..."),
+    "intercept":       (45, "Interceptando requisições de rede..."),
+    "datalayer":       (60, "Extraindo DataLayer..."),
+    "attribution":     (70, "Testando atribuição de mídia..."),
+    "page_datalayer":  (80, "Analisando DataLayer por página..."),
+    "scoring":         (90, "Calculando scores..."),
+}
+
+
+def _stage_to_progress(stage: str) -> tuple[int, str]:
+    """Map a pipeline stage name to (percent, description) for the progress bar."""
+    return _STAGE_PROGRESS.get(stage, (None, None))
+
+
 # ============================================================================
 # FUNNEL PAGES DISPLAY
 # ============================================================================
@@ -429,21 +445,49 @@ def run_diagnostic(url: str) -> dict:
         timeout = 180
 
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
             cwd=str(PROJECT_ROOT),
         )
 
-        # Parse and display structured progress messages
-        if proc.stderr:
-            log_container = st.container()
-            messages = _parse_pipeline_stderr(proc.stderr)
-            _render_pipeline_progress(messages, log_container)
+        # Stream stderr line-by-line to update progress in real time
+        log_container = st.container()
+        status_icons = {"ok": "✅", "running": "🔄", "error": "❌", "info": "ℹ️"}
+        stderr_lines = []
 
-        pipeline = json.loads(proc.stdout or '{}')
+        for line in proc.stderr:
+            line = line.strip()
+            if not line:
+                continue
+            stderr_lines.append(line)
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                msg = {"stage": "pipeline", "status": "info", "detail": line}
+
+            # Update progress bar based on stage
+            stage = msg.get("stage", "")
+            pct, desc = _stage_to_progress(stage)
+            if pct is not None:
+                progress.progress(pct, text=desc)
+
+            # Show the log line
+            icon = status_icons.get(msg.get("status", "info"), "ℹ️")
+            detail = msg.get("detail", "")
+            if detail:
+                log_container.caption(f"{icon} **{stage}**: {detail}")
+
+        # Wait for process to finish and collect stdout
+        stdout, _ = proc.communicate(timeout=timeout)
+
+        if proc.returncode != 0 and not stdout:
+            st.error("❌ O pipeline retornou erro.")
+            return None
+
+        pipeline = json.loads(stdout or '{}')
 
         # Handle structured browser error from subprocess
         if pipeline.get("browser_error"):
@@ -462,6 +506,7 @@ def run_diagnostic(url: str) -> dict:
         pipeline.setdefault("per_page_dl", {})
 
     except subprocess.TimeoutExpired:
+        proc.kill()
         st.error(f"⏱️ Timeout: a análise excedeu {timeout} segundos.")
         return None
     except json.JSONDecodeError:
@@ -619,18 +664,6 @@ def render_dashboard(report: dict):
 
     overall = report.get("overall_maturity", {})
     modules = report.get("modules", {})
-
-    # Funnel pages summary (if available from discovery step)
-    funnel_sel = st.session_state.get("funnel_selection")
-    if funnel_sel is not None:
-        with st.expander("🗺️ Páginas do Funil Analisadas", expanded=False):
-            for stage_key, (icon, label) in STAGE_LABELS.items():
-                page_data = funnel_sel.pages.get(stage_key)
-                if page_data is not None:
-                    conf = int(page_data.confidence * 100)
-                    st.markdown(f"**{icon} {label}** — [{page_data.url}]({page_data.url}) ({conf}%)")
-                else:
-                    st.markdown(f"**{icon} {label}** — ⚠️ Não identificada")
 
     # Overall score header
     score = overall.get("score", 0)

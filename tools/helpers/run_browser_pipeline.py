@@ -666,7 +666,7 @@ async def run_all(
         spider_result: dict = {}
         final_funnel_pages = dict(funnel_pages or {})
         if gaps:
-            _log("spider", "running", f"Preenchendo gaps: {gaps}")
+            _log("spider", "running", f"Buscando páginas para gaps: {', '.join(gaps)}")
             try:
                 spider_result = await spider_for_gaps(
                     browser, url, final_funnel_pages, gaps,
@@ -674,8 +674,9 @@ async def run_all(
                 for stage_key, page_info in spider_result.get("funnel_pages", {}).items():
                     if page_info and stage_key not in final_funnel_pages:
                         final_funnel_pages[stage_key] = page_info["url"]
+                        _log("spider", "info", f"Encontrada: {stage_key} → {page_info['url'][:80]}")
                 found = spider_result.get("spider_stats", {}).get("spider_urls", 0)
-                _log("spider", "ok", f"{found} páginas encontradas")
+                _log("spider", "ok", f"Spider concluído: {found} URLs visitadas")
                 stage_results["spider"] = "ok"
             except Exception as e:
                 _log("spider", "error", f"{type(e).__name__}: {e}")
@@ -694,25 +695,28 @@ async def run_all(
         cdp = await context.new_cdp_session(page)
 
         # Stage 2: Network interception
-        _log("intercept", "running", f"Interceptando rede: {url}")
+        _log("intercept", "running", f"Navegando e capturando tráfego: {url[:80]}")
         requests = await intercept_network(page, cdp, url)
         await cdp.detach()
-        _log("intercept", "ok", f"{len(requests)} requests capturados")
+        _log("intercept", "ok", f"Captura concluída: {len(requests)} requests interceptados")
         stage_results["intercept"] = "ok" if requests else "empty"
 
         # Stage 5: DataLayer (same page, no re-navigation — legacy single-page)
-        _log("datalayer", "running", "Extraindo DataLayer da página principal")
+        _log("datalayer", "running", "Analisando window.dataLayer da página principal...")
         dl_data = await inspect_datalayer(page)
-        _log("datalayer", "ok", f"dataLayer exists: {dl_data.get('datalayer_exists', False)}")
+        events_count = dl_data.get("datalayer_events_count", 0)
+        _log("datalayer", "ok", f"DataLayer: {events_count} eventos encontrados")
         stage_results["datalayer"] = "ok"
 
         await context.close()
 
         # Stage 3: Attribution (separate context)
-        _log("attribution", "running", "Testando atribuição (UTMs, cookies)")
+        _log("attribution", "running", "Testando persistência de UTMs e cookies de click ID...")
         try:
             attr_data = await test_attribution(browser, url)
-            _log("attribution", "ok", f"Cookies: {len(attr_data.get('cookies_found', []))}")
+            cookies_found = attr_data.get("cookies_found", [])
+            strips = "sim" if attr_data.get("redirect_strips_params") else "não"
+            _log("attribution", "ok", f"{len(cookies_found)} cookies encontrados · redirect strip: {strips}")
             stage_results["attribution"] = "ok"
         except Exception as e:
             _log("attribution", "error", f"{type(e).__name__}: {e}")
@@ -722,17 +726,22 @@ async def run_all(
         # Per-page DataLayer analysis (uses merged pages including spider results)
         per_page_dl = {}
         if final_funnel_pages:
-            for stage, page_url in final_funnel_pages.items():
-                _log("page_datalayer", "running", f"{stage} → {page_url}")
+            total_pages = len(final_funnel_pages)
+            for idx, (stage, page_url) in enumerate(final_funnel_pages.items(), 1):
+                _log("page_datalayer", "running", f"Página {idx}/{total_pages}: {stage} → {page_url[:80]}")
                 try:
                     per_page_dl[stage] = await inspect_page_datalayer(browser, page_url)
+                    accessible = per_page_dl[stage].get("accessible", False)
+                    _log("page_datalayer", "info", f"{stage}: {'acessível' if accessible else 'inacessível'}")
                 except Exception as e:
                     _log("page_datalayer", "error", f"{stage}: {e}")
                     per_page_dl[stage] = {"url": page_url, "accessible": False}
+            _log("page_datalayer", "ok", f"Análise de {total_pages} páginas concluída")
             stage_results["page_datalayer"] = "ok"
 
         await browser.close()
 
+    _log("scoring", "running", "Preparando dados para scoring...")
     return {
         "status": "ok",
         "browser_error": "",
